@@ -1,0 +1,125 @@
+"""Servicio ReST - Resumen estadístico de ventas (Cruz Morada).
+
+Endpoints:
+    GET  /v1/estadisticas/ventas   -> estadísticas con filtros por query params.
+    POST /v1/estadisticas/ventas   -> estadísticas con filtros en el body.
+"""
+from contextlib import asynccontextmanager
+from typing import Optional
+
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
+from . import config
+from .errors import ApiError, error_body, internal_error, validation_error
+from .filters import FilterError, UnknownFilter, build_predicate
+from .loader import store
+from .schemas import PostBody, Resumen
+from .stats import compute_stats
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Carga desatendida: el CSV se procesa al iniciar la aplicación.
+    store.load(config.CSV_PATH)
+    yield
+
+
+app = FastAPI(
+    title="Cruz Morada - Servicio ReST de Resumen Estadístico",
+    version="1.0.0",
+    description="Resumen estadístico de ventas con procesamiento paralelo (Polars).",
+    lifespan=lifespan,
+)
+
+
+# --------------------------------------------------------------------------- #
+# Manejadores de errores (formato estándar del enunciado)
+# --------------------------------------------------------------------------- #
+@app.exception_handler(ApiError)
+async def _api_error_handler(request: Request, exc: ApiError):
+    return JSONResponse(
+        status_code=exc.status,
+        content=error_body(exc.status, exc.detail, exc.title, exc.error_code, exc.error_label, request.method),
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def _request_validation_handler(request: Request, exc: RequestValidationError):
+    err = validation_error("El cuerpo de la solicitud no tiene un formato válido")
+    return JSONResponse(
+        status_code=err.status,
+        content=error_body(err.status, err.detail, err.title, err.error_code, err.error_label, request.method),
+    )
+
+
+@app.exception_handler(Exception)
+async def _unhandled_handler(request: Request, exc: Exception):
+    err = internal_error(f"Error interno inesperado: {exc}")
+    return JSONResponse(
+        status_code=err.status,
+        content=error_body(err.status, err.detail, err.title, err.error_code, err.error_label, request.method),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Lógica compartida
+# --------------------------------------------------------------------------- #
+def _make_predicates(items):
+    preds = []
+    for consulta, valor in items:
+        try:
+            preds.append(build_predicate(consulta, valor))
+        except UnknownFilter:
+            raise validation_error(f"La consulta '{consulta}' no es un filtro soportado")
+        except FilterError as e:
+            raise validation_error(str(e))
+    return preds
+
+
+def _run(predicates):
+    if not store.loaded or store.df is None:
+        raise internal_error("Los datos no están disponibles")
+    try:
+        return compute_stats(store.df, config.METRIC_COLUMN, predicates)
+    except ApiError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise internal_error(f"Error al calcular las estadísticas: {e}")
+
+
+# --------------------------------------------------------------------------- #
+# Endpoints
+# --------------------------------------------------------------------------- #
+@app.get(config.API_BASE, response_model=Resumen)
+async def get_estadisticas(
+    GENERO: Optional[str] = None,
+    EDAD: Optional[str] = None,
+    CANAL: Optional[str] = None,
+    CODIGO_PRODUCTO: Optional[str] = None,
+    ID_PERSONA: Optional[str] = None,
+    LOCAL: Optional[str] = None,
+    FECHA_DESDE: Optional[str] = None,
+    FECHA_HASTA: Optional[str] = None,
+):
+    provided = {
+        "GENERO": GENERO,
+        "EDAD": EDAD,
+        "CANAL": CANAL,
+        "CODIGO_PRODUCTO": CODIGO_PRODUCTO,
+        "ID_PERSONA": ID_PERSONA,
+        "LOCAL": LOCAL,
+        "FECHA_DESDE": FECHA_DESDE,
+        "FECHA_HASTA": FECHA_HASTA,
+    }
+    items = [(k, v) for k, v in provided.items() if v is not None]
+    return _run(_make_predicates(items))
+
+
+@app.post(config.API_BASE, response_model=Resumen)
+async def post_estadisticas(body: PostBody):
+    if not body.consultas:
+        raise validation_error("El campo 'consultas' no puede estar vacío o nulo")
+    items = [(c.consulta, c.valor) for c in body.consultas]
+    return _run(_make_predicates(items))

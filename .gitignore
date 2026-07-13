@@ -1,0 +1,19 @@
+# Datos: no subir ningún archivo de la carpeta data/ (CSV de gran volumen, etc.)
+data/*
+!data/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Entornos virtuales
+.venv/
+venv/
+env/
+
+# Sistema / editor
+.DS_Store
+.idea/
+.vscode/
