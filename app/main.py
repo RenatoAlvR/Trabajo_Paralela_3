@@ -10,9 +10,17 @@ from typing import Optional
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import config
-from .errors import ApiError, error_body, internal_error, validation_error
+from .errors import (
+    ApiError,
+    error_body,
+    from_status,
+    internal_error,
+    service_unavailable,
+    validation_error,
+)
 from .filters import FilterError, UnknownFilter, build_predicate
 from .loader import store
 from .schemas import PostBody, Resumen
@@ -23,6 +31,10 @@ from .stats import compute_stats
 async def lifespan(app: FastAPI):
     # Carga desatendida: el CSV se procesa al iniciar la aplicación.
     store.load(config.CSV_PATH)
+    # Métricas precomputadas: el resumen global (sin filtros) se calcula UNA
+    # sola vez al arranque y se guarda en memoria, de modo que un GET sin
+    # filtros lo devuelve al instante sin recorrer los 3,2M de registros.
+    store.resumen_global = compute_stats(store.df, config.METRIC_COLUMN, [])
     yield
 
 
@@ -48,6 +60,19 @@ async def _api_error_handler(request: Request, exc: ApiError):
 @app.exception_handler(RequestValidationError)
 async def _request_validation_handler(request: Request, exc: RequestValidationError):
     err = validation_error("El cuerpo de la solicitud no tiene un formato válido")
+    return JSONResponse(
+        status_code=err.status,
+        content=error_body(err.status, err.detail, err.title, err.error_code, err.error_label, request.method),
+    )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _http_exception_handler(request: Request, exc: StarletteHTTPException):
+    # Reformatea los errores HTTP que emite el framework (404 ruta inexistente,
+    # 405 método no permitido, 415 media type no soportado, etc.) al formato
+    # estándar del enunciado, en lugar del JSON por defecto de FastAPI.
+    detail = exc.detail if isinstance(exc.detail, str) and exc.detail.strip() else None
+    err = from_status(exc.status_code, detail)
     return JSONResponse(
         status_code=err.status,
         content=error_body(err.status, err.detail, err.title, err.error_code, err.error_label, request.method),
@@ -80,7 +105,9 @@ def _make_predicates(items):
 
 def _run(predicates):
     if not store.loaded or store.df is None:
-        raise internal_error("Los datos no están disponibles")
+        raise service_unavailable(
+            "Los datos aún no están disponibles; el servicio está cargando el CSV"
+        )
     try:
         return compute_stats(store.df, config.METRIC_COLUMN, predicates)
     except ApiError:
@@ -120,6 +147,12 @@ async def get_estadisticas(
         "FECHA_HASTA": FECHA_HASTA,
     }
     items = [(k, v) for k, v in provided.items() if v is not None]
+    if not items:
+        # GET sin filtros -> métricas PRECOMPUTADAS al arranque (acceso
+        # inmediato, sin recorrer los 3,2M de registros). Cumple el objetivo 1a.
+        if store.resumen_global is None:
+            raise service_unavailable("Las métricas precomputadas aún no están disponibles")
+        return store.resumen_global
     return _run(_make_predicates(items))
 
 

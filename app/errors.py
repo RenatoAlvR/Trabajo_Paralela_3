@@ -47,3 +47,46 @@ def validation_error(detail):
 def internal_error(detail):
     """500 Internal Server Error - Error Interno (IE)."""
     return ApiError(500, detail, "Internal Server Error", "IE", "Error Interno")
+
+
+def service_unavailable(detail):
+    """503 Service Unavailable - Servicio No Disponible (SND).
+
+    Se usa cuando llega una petición pero los datos aún no están disponibles en
+    memoria (p. ej. una consulta durante el arranque, antes de que termine la
+    carga desatendida del CSV)."""
+    return ApiError(503, detail, "Service Unavailable", "SND", "Servicio No Disponible")
+
+
+# Catálogo status HTTP -> (title, errorCode, errorLabel). Cubre los casos del
+# manejador de referencia del profesor (400/404/405/415/500) y añade tres
+# propios (406/413/503). Cualquier status no listado usa la entrada por defecto.
+_CATALOGO = {
+    400: ("Bad Request", "VF", "Validación Fallida"),
+    404: ("Not Found", "RNE", "Recurso No Encontrado"),
+    405: ("Method Not Allowed", "MNP", "Método No Permitido"),
+    406: ("Not Acceptable", "NA", "No Aceptable"),
+    413: ("Payload Too Large", "CDG", "Carga Demasiado Grande"),
+    415: ("Unsupported Media Type", "TNS", "Tipo de Contenido No Soportado"),
+    500: ("Internal Server Error", "IE", "Error Interno"),
+    503: ("Service Unavailable", "SND", "Servicio No Disponible"),
+}
+_DEFAULT = ("Error", "DC", "Error Desconocido")
+
+_DETALLE_DEFECTO = {
+    404: "El recurso solicitado no existe",
+    405: "El método HTTP no está permitido en este recurso",
+    406: "No se puede satisfacer el tipo de contenido solicitado (cabecera Accept)",
+    413: "El cuerpo de la solicitud excede el tamaño permitido",
+    415: "El tipo de contenido (Content-Type) no es soportado",
+}
+
+
+def from_status(status, detail=None):
+    """Construye un ApiError con title/errorCode/errorLabel a partir del status
+    HTTP. Permite reformatear cualquier error del framework (404/405/415/...) al
+    formato estándar del enunciado."""
+    title, code, label = _CATALOGO.get(status, _DEFAULT)
+    if not detail:
+        detail = _DETALLE_DEFECTO.get(status, title)
+    return ApiError(status, detail, title, code, label)

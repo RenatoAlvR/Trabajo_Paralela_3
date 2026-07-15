@@ -170,6 +170,8 @@ class DataStore:
         self.source: Path | None = None
         self.rows_total = 0
         self.rows_dropped = 0
+        # Resumen estadístico global (sin filtros) precomputado al arranque.
+        self.resumen_global: dict | None = None
 
     def load(self, path) -> "DataStore":
         path = _resolve_path(path)

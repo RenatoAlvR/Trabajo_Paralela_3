@@ -19,3 +19,6 @@ env/
 .vscode/
 basura/
 
+# Repositorio de ejemplo del profesor (NO subir: es material de referencia, no del trabajo)
+utem-weather-app/
+
