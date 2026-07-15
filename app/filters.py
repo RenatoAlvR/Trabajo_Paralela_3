@@ -30,9 +30,13 @@ class UnknownFilter(KeyError):
 
 def _to_int(valor, label):
     try:
-        return int(str(valor).strip())
+        v = int(str(valor).strip())
     except (ValueError, TypeError):
         raise FilterError(f"El valor '{valor}' no es un número entero válido para {label}")
+    # Los datos se almacenan como Int64: fuera de ese rango no puede existir.
+    if not -(2**63) <= v < 2**63:
+        raise FilterError(f"El valor '{valor}' está fuera de rango para {label}")
+    return v
 
 
 def _to_datetime(valor, label):
@@ -69,10 +73,11 @@ def build_predicate(consulta: str, valor) -> pl.Expr:
 
     if c == "ID_PERSONA":
         try:
-            uuid.UUID(str(valor))
+            u = uuid.UUID(str(valor).strip())
         except (ValueError, AttributeError, TypeError):
             raise FilterError(f"El valor '{valor}' no es un UUID válido para ID_PERSONA")
-        return pl.col("codigo_cliente") == str(valor)
+        # Forma canónica en minúsculas; la columna ya se normalizó al cargar.
+        return pl.col("codigo_cliente") == str(u)
 
     if c == "LOCAL":
         return pl.col("local") == _to_int(valor, "LOCAL")

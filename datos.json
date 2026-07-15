@@ -1,0 +1,180 @@
+{
+  "descripcion": "Datos de prueba del servicio ReST de resumen estadístico de ventas (Cruz Morada). Incluye ejemplos de solicitudes GET/POST, respuestas exitosas con las 7 métricas y respuestas de error en el formato estándar.",
+  "endpoint_base": "/v1/estadisticas/ventas",
+  "metodos_soportados": ["GET", "POST"],
+  "filtros_soportados": {
+    "GENERO": ["No especificado", "Masculino", "Femenino", "Otro"],
+    "EDAD": "Número entero (edad exacta del cliente)",
+    "CANAL": ["POS", "WEB", "APP", "CCT", "APR", "WPR"],
+    "CODIGO_PRODUCTO": "Número entero (SKU del producto)",
+    "ID_PERSONA": "UUID del cliente (CODIGO CLIENTE)",
+    "LOCAL": "Número entero (identificador del local)",
+    "FECHA_DESDE": "Fecha ISO-8601 (inclusive)",
+    "FECHA_HASTA": "Fecha ISO-8601 (inclusive)"
+  },
+  "ejemplos_get": [
+    {
+      "descripcion": "Estadísticas generales sin filtros",
+      "solicitud": "GET /v1/estadisticas/ventas"
+    },
+    {
+      "descripcion": "Ventas del canal POS de clientes de 31 años",
+      "solicitud": "GET /v1/estadisticas/ventas?CANAL=POS&EDAD=31"
+    },
+    {
+      "descripcion": "Ventas de un rango de fechas",
+      "solicitud": "GET /v1/estadisticas/ventas?FECHA_DESDE=2026-01-01T00:00:00&FECHA_HASTA=2026-06-30T23:59:59"
+    }
+  ],
+  "ejemplos_post": [
+    {
+      "descripcion": "Consulta con un solo filtro",
+      "payload": {
+        "consultas": [
+          { "consulta": "CANAL", "valor": "POS" }
+        ]
+      }
+    },
+    {
+      "descripcion": "Consulta con varios filtros combinados (ejemplo del enunciado)",
+      "payload": {
+        "consultas": [
+          { "consulta": "GENERO", "valor": "Femenino" },
+          { "consulta": "EDAD", "valor": "31" },
+          { "consulta": "CANAL", "valor": "POS" }
+        ]
+      }
+    },
+    {
+      "descripcion": "Consulta por cliente y local en un rango de fechas",
+      "payload": {
+        "consultas": [
+          { "consulta": "ID_PERSONA", "valor": "550e8400-e29b-41d4-a716-446655440000" },
+          { "consulta": "LOCAL", "valor": "1999" },
+          { "consulta": "FECHA_DESDE", "valor": "2026-01-01T00:00:00" },
+          { "consulta": "FECHA_HASTA", "valor": "2026-03-31T23:59:59" }
+        ]
+      }
+    },
+    {
+      "descripcion": "Consulta por producto (SKU)",
+      "payload": {
+        "consultas": [
+          { "consulta": "CODIGO_PRODUCTO", "valor": "1095" }
+        ]
+      }
+    }
+  ],
+  "ejemplo_respuesta_exitosa": {
+    "descripcion": "Respuesta 200 OK con las 7 métricas sobre MONTO APLICADO, redondeadas a 2 decimales",
+    "status": 200,
+    "body": {
+      "suma": 1500.5,
+      "conteo": 42,
+      "promedio": 35.73,
+      "minimo": 10.0,
+      "maximo": 100.0,
+      "mediana": 30.0,
+      "desviacion_estandar": 25.4
+    }
+  },
+  "ejemplo_respuesta_sin_coincidencias": {
+    "descripcion": "Respuesta 200 OK cuando ningún registro coincide con los filtros",
+    "status": 200,
+    "body": {
+      "suma": 0.0,
+      "conteo": 0,
+      "promedio": null,
+      "minimo": null,
+      "maximo": null,
+      "mediana": null,
+      "desviacion_estandar": null
+    }
+  },
+  "ejemplos_error": [
+    {
+      "descripcion": "400 Bad Request: valor no convertible al tipo esperado",
+      "solicitud": {
+        "metodo": "POST",
+        "payload": {
+          "consultas": [
+            { "consulta": "LOCAL", "valor": "qwerqwer" }
+          ]
+        }
+      },
+      "status": 400,
+      "body": {
+        "detail": "El valor 'qwerqwer' no es un número entero válido para LOCAL",
+        "instance": "/v1/estadisticas/ventas",
+        "status": 400,
+        "title": "Bad Request",
+        "type": "https://developer.mozilla.org/es/docs/Web/HTTP/Reference/Status/400",
+        "timestamp": "2026-06-30T20:44:49.201437123Z",
+        "errorCode": "VF",
+        "errorLabel": "Validación Fallida",
+        "method": "POST"
+      }
+    },
+    {
+      "descripcion": "400 Bad Request: consultas vacío o nulo",
+      "solicitud": {
+        "metodo": "POST",
+        "payload": { "consultas": [] }
+      },
+      "status": 400,
+      "body": {
+        "detail": "El campo 'consultas' no puede estar vacío o nulo",
+        "instance": "/v1/estadisticas/ventas",
+        "status": 400,
+        "title": "Bad Request",
+        "type": "https://developer.mozilla.org/es/docs/Web/HTTP/Reference/Status/400",
+        "timestamp": "2026-06-30T20:44:49.201437123Z",
+        "errorCode": "VF",
+        "errorLabel": "Validación Fallida",
+        "method": "POST"
+      }
+    },
+    {
+      "descripcion": "400 Bad Request: valor no permitido para GENERO",
+      "solicitud": {
+        "metodo": "POST",
+        "payload": {
+          "consultas": [
+            { "consulta": "GENERO", "valor": "Desconocido" }
+          ]
+        }
+      },
+      "status": 400,
+      "body": {
+        "detail": "El valor 'Desconocido' no es válido para GENERO",
+        "instance": "/v1/estadisticas/ventas",
+        "status": 400,
+        "title": "Bad Request",
+        "type": "https://developer.mozilla.org/es/docs/Web/HTTP/Reference/Status/400",
+        "timestamp": "2026-06-30T20:44:49.201437123Z",
+        "errorCode": "VF",
+        "errorLabel": "Validación Fallida",
+        "method": "POST"
+      }
+    },
+    {
+      "descripcion": "500 Internal Server Error: error interno con el formato estándar",
+      "solicitud": {
+        "metodo": "GET",
+        "payload": null
+      },
+      "status": 500,
+      "body": {
+        "detail": "Error al calcular la desviación estándar",
+        "instance": "/v1/estadisticas/ventas",
+        "status": 500,
+        "title": "Internal Server Error",
+        "type": "https://developer.mozilla.org/es/docs/Web/HTTP/Reference/Status/500",
+        "timestamp": "2026-06-30T20:44:49.201437123Z",
+        "errorCode": "IE",
+        "errorLabel": "Error Interno",
+        "method": "GET"
+      }
+    }
+  ]
+}

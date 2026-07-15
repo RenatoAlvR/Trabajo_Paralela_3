@@ -19,8 +19,10 @@ class ApiError(Exception):
 
 
 def _now_iso():
-    # Formato: 2026-06-30T20:44:49.201437Z
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+    # Formato del enunciado: 2026-06-30T20:44:49.201437123Z (9 dígitos
+    # fraccionarios). Python resuelve hasta microsegundos; se completa a
+    # nanosegundos para calzar con el formato del ejemplo.
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "000Z"
 
 
 def error_body(status, detail, title, error_code, error_label, method):
