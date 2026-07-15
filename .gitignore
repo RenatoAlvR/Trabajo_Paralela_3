@@ -1,6 +1,6 @@
 # Datos: no subir ningún archivo de la carpeta data/ (CSV de gran volumen, etc.)
 data/*
-!data/.gitkeep
+!data/README.md
 
 # Python
 __pycache__/
@@ -17,3 +17,5 @@ env/
 .DS_Store
 .idea/
 .vscode/
+basura/
+

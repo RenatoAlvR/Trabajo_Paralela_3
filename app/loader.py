@@ -3,13 +3,25 @@
 Soporta:
   * CSV sin comprimir (.csv)      -> lectura perezosa + motor streaming.
   * CSV comprimido con gzip (.gz) -> lectura con descompresión automática.
-El separador (`;` o `,`) se autodetecta, al igual que la compresión.
+El separador (`;`, `,`, tab o `|`) y la compresión se autodetectan.
+
+Robustez frente a datos corruptos:
+  * Todas las columnas se leen como texto (sin inferencia de tipos) y luego se
+    convierten con casts tolerantes (strict=False): un valor ilegible se
+    convierte en null en vez de abortar la carga completa del archivo.
+  * Las cabeceras se normalizan (BOM, espacios, mayúsculas y tildes), por lo
+    que se aceptan tanto "GENERO" como "GÉNERO".
+  * Si falta una columna requerida se aborta el arranque con un mensaje claro.
+  * Las filas sin fecha de operación, sin monto o con fecha de nacimiento
+    implausible se descartan y se contabilizan en `rows_dropped`.
 
 Polars ejecuta la lectura y las agregaciones en paralelo sobre todos los
 núcleos disponibles; el motor "streaming" procesa el archivo por chunks,
 evitando cargar todo el volumen de una sola vez en memoria.
 """
 import gzip
+import re
+import unicodedata
 from datetime import date
 from pathlib import Path
 
@@ -17,7 +29,9 @@ import polars as pl
 
 from . import config
 
-# Mapeo de las columnas originales (con espacios) a nombres canónicos.
+# Mapeo de las columnas originales a nombres canónicos. Las claves se
+# comparan tras normalizar cabeceras (_canon), de modo que "GÉNERO",
+# "genero " o una cabecera con BOM también calzan.
 RENAME = {
     "FECHA": "fecha",
     "CANAL": "canal",
@@ -34,10 +48,18 @@ RENAME = {
     "APELLIDOS": "apellidos",
     "FECHA NACIMIENTO": "fecha_nacimiento",
     "GENERO": "genero",
+    "GÉNERO": "genero",
 }
 
-# Fuerza tipos en columnas sensibles (evita inferencias erróneas int/float).
-SCHEMA_OVERRIDES = {"MONTO APLICADO": pl.Float64}
+# Columnas sin las cuales el servicio no puede operar (filtros + métrica).
+REQUIRED = {
+    "fecha", "canal", "sku", "monto_aplicado", "local",
+    "codigo_cliente", "fecha_nacimiento", "genero",
+}
+
+# Columnas numéricas: cast tolerante tras leerlas como texto.
+INT_COLS = ("sku", "unidades", "boleta", "local", "genero")
+FLOAT_COLS = ("porcentaje_descuento", "monto_aplicado")
 
 # Extensiones de CSV reconocidas para la autodetección de archivo.
 CSV_SUFFIXES = (".csv", ".csv.gz", ".gz")
@@ -49,6 +71,21 @@ GENERO_LABEL = (
     .otherwise(pl.lit("No especificado"))
     .alias("genero_label")
 )
+
+
+def _canon(name: str) -> str:
+    """Normaliza una cabecera: sin tildes, sin BOM ni caracteres de formato
+    (categoría Unicode Cf), sin espacios laterales, espacios internos
+    colapsados y en mayúsculas."""
+    s = unicodedata.normalize("NFKD", str(name))
+    s = "".join(
+        c for c in s
+        if not unicodedata.combining(c) and unicodedata.category(c) != "Cf"
+    )
+    return re.sub(r"\s+", " ", s.strip().upper())
+
+
+_RENAME_CANON = {_canon(k): v for k, v in RENAME.items()}
 
 
 def _is_gzip(path: Path) -> bool:
@@ -89,6 +126,27 @@ def _resolve_path(path) -> Path:
     return max(candidates, key=lambda p: p.stat().st_size)
 
 
+def _rename_map(columnas) -> dict:
+    """Construye el mapa de renombrado con cabeceras normalizadas, evitando
+    colisiones si dos cabeceras apuntan al mismo nombre canónico."""
+    mapa, usados = {}, set()
+    for col in columnas:
+        canon = _canon(col)
+        target = _RENAME_CANON.get(canon)
+        # Tolerancia extra para GÉNERO leído con codificación dañada (G?NERO).
+        if target is None and re.fullmatch(r"G.?NERO", canon):
+            target = "genero"
+        if target and target not in usados:
+            mapa[col] = target
+            usados.add(target)
+    return mapa
+
+
+def _texto(col: str) -> pl.Expr:
+    """Columna como texto sin espacios laterales (null si no es convertible)."""
+    return pl.col(col).cast(pl.Utf8, strict=False).str.strip_chars()
+
+
 def _edad_expr(hoy: date) -> pl.Expr:
     """Edad exacta en años a partir de la fecha de nacimiento."""
     fn = pl.col("fecha_nacimiento")
@@ -119,38 +177,59 @@ class DataStore:
         separator = _detect_separator(_first_line(path, gz))
         hoy = date.today()
 
+        # Sin inferencia de tipos: todo entra como texto y se convierte con
+        # casts tolerantes. Así una celda corrupta no aborta la carga.
         read_kwargs = dict(
             separator=separator,
-            infer_schema_length=10_000,
-            schema_overrides=SCHEMA_OVERRIDES,
+            encoding="utf8-lossy",
+            truncate_ragged_lines=True,
         )
 
         if gz:
             # scan_csv no admite gzip; read_csv descomprime automáticamente.
-            lf = pl.read_csv(str(path), **read_kwargs).lazy()
+            lf = pl.read_csv(str(path), infer_schema=False, **read_kwargs).lazy()
         else:
-            lf = pl.scan_csv(str(path), **read_kwargs)
+            lf = pl.scan_csv(str(path), infer_schema=False, **read_kwargs)
 
-        existentes = set(lf.collect_schema().names())
-        lf = lf.rename({k: v for k, v in RENAME.items() if k in existentes})
+        existentes = lf.collect_schema().names()
+        lf = lf.rename(_rename_map(existentes))
 
-        lf = lf.with_columns(
-            pl.col("fecha").str.to_datetime(strict=False).alias("fecha"),
-            pl.col("fecha_nacimiento").str.to_date(strict=False).alias("fecha_nacimiento"),
-            pl.col("genero").cast(pl.Int64, strict=False).alias("genero"),
-            pl.col("monto_aplicado").cast(pl.Float64, strict=False).alias("monto_aplicado"),
-        ).with_columns(
-            GENERO_LABEL,
-            _edad_expr(hoy),
-        )
+        columnas = set(lf.collect_schema().names())
+        faltantes = REQUIRED - columnas
+        if faltantes:
+            raise ValueError(
+                "El CSV no contiene columnas requeridas: "
+                + ", ".join(sorted(faltantes))
+                + f". Cabeceras encontradas: {existentes}"
+            )
+
+        exprs = [
+            _texto("fecha").str.to_datetime(strict=False).alias("fecha"),
+            _texto("fecha_nacimiento").str.to_date(strict=False).alias("fecha_nacimiento"),
+            _texto("canal").alias("canal"),
+            # Los UUID son case-insensitive: se normalizan a minúsculas.
+            _texto("codigo_cliente").str.to_lowercase().alias("codigo_cliente"),
+        ]
+        exprs += [
+            _texto(c).cast(pl.Int64, strict=False).alias(c)
+            for c in INT_COLS if c in columnas
+        ]
+        exprs += [
+            _texto(c).cast(pl.Float64, strict=False).alias(c)
+            for c in FLOAT_COLS if c in columnas
+        ]
+
+        lf = lf.with_columns(exprs).with_columns(GENERO_LABEL, _edad_expr(hoy))
 
         df = self._collect(lf, gz)
 
-        # Descarta filas con fecha de nacimiento corrupta (edad implausible).
+        # Descarta filas corruptas en los campos esenciales de la venta:
+        # sin fecha de operación, sin monto o con nacimiento implausible.
         valido = (
-            pl.col("fecha_nacimiento").is_not_null()
-            & (pl.col("edad") >= config.MIN_AGE)
-            & (pl.col("edad") <= config.MAX_AGE)
+            pl.col("fecha").is_not_null()
+            & pl.col("monto_aplicado").is_not_null()
+            & pl.col("fecha_nacimiento").is_not_null()
+            & pl.col("edad").is_between(config.MIN_AGE, config.MAX_AGE)
         )
         self.rows_total = df.height
         df = df.filter(valido)

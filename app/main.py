@@ -9,7 +9,7 @@ from typing import Optional
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from . import config
 from .errors import ApiError, error_body, internal_error, validation_error
@@ -92,6 +92,12 @@ def _run(predicates):
 # --------------------------------------------------------------------------- #
 # Endpoints
 # --------------------------------------------------------------------------- #
+@app.get("/", include_in_schema=False)
+async def root():
+    """La raíz redirige a la documentación interactiva (Swagger UI)."""
+    return RedirectResponse(url="/docs")
+
+
 @app.get(config.API_BASE, response_model=Resumen)
 async def get_estadisticas(
     GENERO: Optional[str] = None,

@@ -45,7 +45,9 @@ def compute_stats(df: pl.DataFrame, metric_col: str, predicates: list[pl.Expr]) 
         }
 
     return {
-        "suma": _round(row["suma"]),
+        # sum() de una columna con todos sus valores nulos devuelve null;
+        # el contrato exige un número, así que se degrada a 0.0.
+        "suma": _round(row["suma"]) if row["suma"] is not None else 0.0,
         "conteo": conteo,
         "promedio": _round(row["promedio"]),
         "minimo": _round(row["minimo"]),
