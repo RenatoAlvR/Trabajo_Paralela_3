@@ -30,9 +30,9 @@ GNU/Linux mediante `pip`.
   **streaming**, que procesa el archivo por *chunks* sin materializar todo el
   volumen de una sola vez, manteniendo bajo el consumo de memoria durante la
   ingesta.
-- **Almacenamiento en memoria**: tras la limpieza (tipado de fechas, cálculo
-  de edad, etiquetado de género, descarte de filas corruptas), el DataFrame
-  queda residente en memoria para responder consultas en milisegundos. Cada
+- **Almacenamiento en memoria**: tras el tipado (fechas, cálculo de edad,
+  etiquetado de género), el DataFrame queda residente en memoria para
+  responder consultas en milisegundos. Cada
   consulta se ejecuta como un plan lazy de Polars (filtros + 7 agregaciones en
   una sola pasada paralela).
 - **Autodetección de formato**: se detectan automáticamente el separador
@@ -41,15 +41,37 @@ GNU/Linux mediante `pip`.
   `GÉNERO` indistintamente.
 - **Tolerancia a datos corruptos**: el CSV se lee sin inferencia de tipos
   (todo como texto) y cada columna se convierte con *casts* tolerantes: una
-  celda ilegible se vuelve `null` en lugar de abortar la carga completa. Las
-  filas corruptas en campos esenciales (sin fecha de operación, sin monto o
-  con fecha de nacimiento implausible) se descartan y se contabilizan; las
+  celda ilegible se vuelve `null` en lugar de abortar la carga completa. **No se
+  descarta ninguna fila**: las métricas globales se calculan sobre TODAS las
+  filas del archivo; la edad solo se usa cuando se aplica el filtro `EDAD`. Las
   líneas con campos de más se truncan. Los UUID de cliente se normalizan a
   minúsculas (son case-insensitive), y los filtros validan rangos numéricos
   antes de tocar los datos.
-- **Errores estandarizados**: todas las respuestas de error (400/500) siguen
-  el formato exacto del enunciado (estilo RFC 7807 extendido con `errorCode`,
-  `errorLabel`, `timestamp` y `method`).
+- **Métricas precomputadas**: el resumen global (sin filtros) se calcula una
+  sola vez al arranque; un `GET` sin filtros lo devuelve al instante, mientras
+  que `GET` con filtros y `POST` calculan dinámicamente.
+- **Errores estandarizados**: todas las respuestas de error (400, 404, 405,
+  406, 413, 415, 500, 503) siguen el formato exacto del enunciado (estilo
+  RFC 7807 extendido con `errorCode`, `errorLabel`, `timestamp` y `method`).
+
+## Docker (reproducibilidad)
+
+La imagen se construye sobre **Ubuntu 24.04 LTS** (Python 3.12). El CSV **no** se
+copia a la imagen: se monta como volumen desde `./data`.
+
+```bash
+# Coloca el CSV en ./data/ventas_completas.csv y luego:
+docker compose up --build
+```
+
+El servicio queda en `http://localhost:8000` (Swagger en `/docs`). La carga del
+CSV ocurre de forma desatendida al iniciar el contenedor. Alternativa sin
+compose:
+
+```bash
+docker build -t cruzmorada-rest .
+docker run --rm -p 8000:8000 -v "$(pwd)/data:/app/data:ro" cruzmorada-rest
+```
 
 ## Estructura del proyecto
 

@@ -1,0 +1,27 @@
+# Datos pesados: se montan como volumen, no se copian a la imagen.
+data/
+
+# Repositorio de ejemplo del profesor (no forma parte del proyecto).
+utem-weather-app/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Entornos virtuales
+.venv/
+venv/
+env/
+
+# Pruebas y notas internas (no necesarias en la imagen de producción)
+tests/
+*.md
+
+# Git y sistema
+.git/
+.gitignore
+.DS_Store
+.idea/
+.vscode/

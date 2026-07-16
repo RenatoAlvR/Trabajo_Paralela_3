@@ -1,0 +1,15 @@
+# Levanta el servicio ReST con el CSV montado como volumen (no se copia a la
+# imagen). Uso:
+#   docker compose up --build
+# El servicio queda en http://localhost:8000  (Swagger en /docs).
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      # El CSV real vive en ./data (ignorado por Git) y se monta de solo lectura.
+      - ./data:/app/data:ro
+    environment:
+      - CSV_PATH=/app/data/ventas_completas.csv
+    restart: unless-stopped

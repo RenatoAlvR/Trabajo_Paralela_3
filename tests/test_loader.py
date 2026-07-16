@@ -1,11 +1,10 @@
-"""Pruebas de las DEFENSAS del cargador: normalización de cabeceras, casts
-tolerantes y descarte contabilizado de filas corruptas.
+"""Pruebas de las DEFENSAS del cargador: normalización de cabeceras y casts
+tolerantes. Política actual: NO se descarta ninguna fila; una celda ilegible
+queda como null pero la fila se conserva y cuenta en los totales globales.
 
 Nota: estos tests fabrican CSVs corruptos ad-hoc (en tmp, nunca en data/)
 porque la corrupción no puede provocarse a voluntad con el archivo real; son
-pruebas del mecanismo de limpieza, no datos de prueba del servicio. La
-robustez que verifican quedó demostrada con el CSV real: 2.810 filas
-corruptas descartadas de 3.242.878 sin abortar la carga."""
+pruebas del mecanismo de tolerancia, no datos de prueba del servicio."""
 import csv
 from datetime import date
 
@@ -46,27 +45,32 @@ def _write(path, filas, sep=","):
         w.writerows(filas)
 
 
-def test_descarta_filas_corruptas_sin_abortar(tmp_path):
-    """Celdas ilegibles en campos esenciales descartan solo esa fila; en
-    campos no esenciales la fila se conserva con null."""
+def test_no_descarta_filas_celdas_corruptas_quedan_null(tmp_path):
+    """Política actual: NINGUNA fila se descarta. Una celda ilegible en
+    cualquier columna queda como null, pero la fila se conserva y cuenta en los
+    totales globales."""
     p = tmp_path / "ventas.csv"
     _write(p, [
         _fila(),                                          # válida
-        _fila(**{"MONTO APLICADO": "no-es-numero"}),      # monto corrupto -> fuera
-        _fila(FECHA="banana"),                            # fecha corrupta -> fuera
-        _fila(**{"FECHA NACIMIENTO": "3000-99-99"}),      # nacimiento ilegible -> fuera
-        _fila(**{"FECHA NACIMIENTO": "1890-01-01"}),      # edad implausible -> fuera
-        _fila(**{"GÉNERO": "zzz"}),                       # género ilegible -> se conserva
-        _fila(LOCAL="abc"),                               # local ilegible -> se conserva
+        _fila(**{"MONTO APLICADO": "no-es-numero"}),      # monto ilegible -> null, se conserva
+        _fila(FECHA="banana"),                            # fecha ilegible -> null, se conserva
+        _fila(**{"FECHA NACIMIENTO": "3000-99-99"}),      # nacimiento ilegible -> null, se conserva
+        _fila(**{"FECHA NACIMIENTO": "1890-01-01"}),      # edad alta -> se conserva (sin filtro de edad)
+        _fila(**{"GÉNERO": "zzz"}),                       # género ilegible -> "No especificado"
+        _fila(LOCAL="abc"),                               # local ilegible -> null
     ])
     ds = DataStore().load(p)
+    # NINGUNA fila se descarta: las 7 se conservan.
     assert ds.rows_total == 7
-    assert ds.rows_dropped == 4
-    assert ds.df.height == 3
-    # El género ilegible queda como "No especificado", no rompe la carga.
-    assert "No especificado" in ds.df["genero_label"].to_list()
-    # El local ilegible queda null (esa fila no matchea filtros por LOCAL).
+    assert ds.rows_dropped == 0
+    assert ds.df.height == 7
+    # Las celdas ilegibles quedan como null, sin romper la carga.
+    assert ds.df["monto_aplicado"].null_count() == 1
+    assert ds.df["fecha"].null_count() == 1
+    assert ds.df["fecha_nacimiento"].null_count() == 1
     assert ds.df["local"].null_count() == 1
+    # El género ilegible queda como "No especificado".
+    assert "No especificado" in ds.df["genero_label"].to_list()
 
 
 def test_cabecera_con_bom_tilde_y_punto_y_coma(tmp_path):

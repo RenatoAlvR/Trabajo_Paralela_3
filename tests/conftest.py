@@ -5,12 +5,12 @@ La suite se ejecuta exclusivamente contra el CSV real de producción
 
 Para verificar los resultados de la API sin depender de Polars, un "oráculo"
 independiente implementado con la librería estándar (csv + math) recorre el
-mismo archivo una vez por sesión, replica las reglas de limpieza del cargador
-(filas sin fecha, sin monto o con nacimiento implausible se descartan) y
-acumula los montos de los subconjuntos que usan las pruebas. Así, la API
-(Polars, paralelo) y el oráculo (Python puro, secuencial) deben coincidir
-sobre los ~3,2 millones de registros: dos implementaciones independientes
-validándose mutuamente.
+mismo archivo una vez por sesión con la misma política del cargador (NO se
+descarta ninguna fila; las métricas globales usan TODAS las filas) y acumula
+los montos de los subconjuntos que usan las pruebas. Así, la API (Polars,
+paralelo) y el oráculo (Python puro, secuencial) deben coincidir sobre los
+~3,2 millones de registros: dos implementaciones independientes validándose
+mutuamente.
 
 Si el CSV real no está en ``data/``, las pruebas de API se omiten con un
 mensaje indicando cómo obtenerlo (ver README).
@@ -121,8 +121,9 @@ def _indice(header) -> dict:
 
 
 def _parse(row, idx, hoy) -> _Fila | None:
-    """Replica la validez del cargador: None si la fila es corrupta en un
-    campo esencial (fecha, monto, nacimiento/edad)."""
+    """Misma política del cargador: NO se descarta ninguna fila. Solo devuelve
+    None si el monto o las fechas no son parseables (no ocurre en el dataset
+    real). La edad se calcula pero NO filtra filas: se usan todas."""
     try:
         fecha_s = row[idx["fecha"]].strip()
         fecha = datetime.fromisoformat(fecha_s)
@@ -131,8 +132,6 @@ def _parse(row, idx, hoy) -> _Fila | None:
     except (ValueError, IndexError):
         return None
     edad = _edad(nacimiento, hoy)
-    if not (config.MIN_AGE <= edad <= config.MAX_AGE):
-        return None
 
     def _int(col):
         try:

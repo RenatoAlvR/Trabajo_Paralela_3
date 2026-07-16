@@ -1,7 +1,12 @@
-"""Formato de errores estándar (estilo RFC 7807) exigido por el enunciado."""
+"""Formato de errores estándar (Problem Detail, RFC 7807/9457) del enunciado."""
 from datetime import datetime, timezone
 
+from fastapi.responses import JSONResponse
+
 from . import config
+
+# Media type estándar para Problem Detail (RFC 9457).
+PROBLEM_JSON = "application/problem+json"
 
 _STATUS_TYPE = "https://developer.mozilla.org/es/docs/Web/HTTP/Reference/Status/{}"
 
@@ -37,6 +42,19 @@ def error_body(status, detail, title, error_code, error_label, method):
         "errorLabel": error_label,
         "method": method,
     }
+
+
+def problem_response(err, method):
+    """Respuesta HTTP de error como Problem Detail (RFC 9457): el cuerpo estándar
+    del enunciado servido con el media type `application/problem+json`. Centraliza
+    la construcción usada por todos los manejadores de excepciones."""
+    return JSONResponse(
+        status_code=err.status,
+        media_type=PROBLEM_JSON,
+        content=error_body(
+            err.status, err.detail, err.title, err.error_code, err.error_label, method
+        ),
+    )
 
 
 def validation_error(detail):

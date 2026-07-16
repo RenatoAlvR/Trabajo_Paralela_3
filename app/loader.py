@@ -12,8 +12,10 @@ Robustez frente a datos corruptos:
   * Las cabeceras se normalizan (BOM, espacios, mayúsculas y tildes), por lo
     que se aceptan tanto "GENERO" como "GÉNERO".
   * Si falta una columna requerida se aborta el arranque con un mensaje claro.
-  * Las filas sin fecha de operación, sin monto o con fecha de nacimiento
-    implausible se descartan y se contabilizan en `rows_dropped`.
+  * NO se descarta ninguna fila: las métricas globales usan TODAS las filas del
+    archivo. Una celda ilegible queda como null (casts tolerantes) y una edad
+    implausible (nacimiento corrupto) simplemente no coincide con un filtro
+    EDAD, pero la fila igual cuenta en los totales globales.
 
 Polars ejecuta la lectura y las agregaciones en paralelo sobre todos los
 núcleos disponibles; el motor "streaming" procesa el archivo por chunks,
@@ -170,6 +172,7 @@ class DataStore:
         self.source: Path | None = None
         self.rows_total = 0
         self.rows_dropped = 0
+        self.rows_monto_null = 0
         # Resumen estadístico global (sin filtros) precomputado al arranque.
         self.resumen_global: dict | None = None
 
@@ -225,17 +228,14 @@ class DataStore:
 
         df = self._collect(lf, gz)
 
-        # Descarta filas corruptas en los campos esenciales de la venta:
-        # sin fecha de operación, sin monto o con nacimiento implausible.
-        valido = (
-            pl.col("fecha").is_not_null()
-            & pl.col("monto_aplicado").is_not_null()
-            & pl.col("fecha_nacimiento").is_not_null()
-            & pl.col("edad").is_between(config.MIN_AGE, config.MAX_AGE)
-        )
+        # Política: NO se descarta ninguna fila. Las métricas globales se calculan
+        # sobre TODAS las filas del archivo. Las celdas ilegibles ya quedaron como
+        # null por los casts tolerantes; una edad implausible (nacimiento corrupto)
+        # no coincidirá con un filtro EDAD, pero la fila igual cuenta en los totales.
         self.rows_total = df.height
-        df = df.filter(valido)
-        self.rows_dropped = self.rows_total - df.height
+        self.rows_dropped = 0
+        # Solo informativo: filas cuyo monto quedó nulo (en el dataset real es 0).
+        self.rows_monto_null = int(df.select(pl.col("monto_aplicado").is_null().sum()).item())
 
         self.df = df
         self.loaded = True

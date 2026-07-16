@@ -21,11 +21,8 @@ USE_STREAMING = os.getenv("USE_STREAMING", "1") == "1"
 # ddof para la desviación estándar: 0 = poblacional, 1 = muestral.
 STD_DDOF = int(os.getenv("STD_DDOF", "0"))
 
-# Rango de edad plausible. Las filas con fecha de nacimiento no parseable o con
-# edad fuera de [MIN_AGE, MAX_AGE] se consideran corruptas y se descartan al
-# cargar (la fuente no ofrece forma de corregirlas).
-MIN_AGE = int(os.getenv("MIN_AGE", "0"))
-MAX_AGE = int(os.getenv("MAX_AGE", "120"))
+# Nota: no se descarta ninguna fila por edad. Las métricas globales usan TODAS
+# las filas del archivo; la edad solo se usa cuando se aplica el filtro EDAD.
 
 # Cantidad de decimales en la respuesta (None = sin redondear).
 ROUND_DECIMALS = int(os.getenv("ROUND_DECIMALS", "2"))

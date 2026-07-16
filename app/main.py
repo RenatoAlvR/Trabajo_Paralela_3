@@ -9,15 +9,15 @@ from typing import Optional
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import RedirectResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import config
 from .errors import (
     ApiError,
-    error_body,
     from_status,
     internal_error,
+    problem_response,
     service_unavailable,
     validation_error,
 )
@@ -51,19 +51,13 @@ app = FastAPI(
 # --------------------------------------------------------------------------- #
 @app.exception_handler(ApiError)
 async def _api_error_handler(request: Request, exc: ApiError):
-    return JSONResponse(
-        status_code=exc.status,
-        content=error_body(exc.status, exc.detail, exc.title, exc.error_code, exc.error_label, request.method),
-    )
+    return problem_response(exc, request.method)
 
 
 @app.exception_handler(RequestValidationError)
 async def _request_validation_handler(request: Request, exc: RequestValidationError):
     err = validation_error("El cuerpo de la solicitud no tiene un formato válido")
-    return JSONResponse(
-        status_code=err.status,
-        content=error_body(err.status, err.detail, err.title, err.error_code, err.error_label, request.method),
-    )
+    return problem_response(err, request.method)
 
 
 @app.exception_handler(StarletteHTTPException)
@@ -73,19 +67,13 @@ async def _http_exception_handler(request: Request, exc: StarletteHTTPException)
     # estándar del enunciado, en lugar del JSON por defecto de FastAPI.
     detail = exc.detail if isinstance(exc.detail, str) and exc.detail.strip() else None
     err = from_status(exc.status_code, detail)
-    return JSONResponse(
-        status_code=err.status,
-        content=error_body(err.status, err.detail, err.title, err.error_code, err.error_label, request.method),
-    )
+    return problem_response(err, request.method)
 
 
 @app.exception_handler(Exception)
 async def _unhandled_handler(request: Request, exc: Exception):
     err = internal_error(f"Error interno inesperado: {exc}")
-    return JSONResponse(
-        status_code=err.status,
-        content=error_body(err.status, err.detail, err.title, err.error_code, err.error_label, request.method),
-    )
+    return problem_response(err, request.method)
 
 
 # --------------------------------------------------------------------------- #

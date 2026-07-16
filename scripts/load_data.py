@@ -16,8 +16,8 @@ def main():
     path = sys.argv[1] if len(sys.argv) > 1 else config.CSV_PATH
     store.load(path)
     df = store.df
-    print(f"Cargado: {df.height} filas válidas, {df.width} columnas desde {store.source}")
-    print(f"Descartadas por corrupción (fecha nacimiento): {store.rows_dropped} de {store.rows_total}")
+    print(f"Cargado: {df.height} filas (sin descartes), {df.width} columnas desde {store.source}")
+    print(f"Filas con monto nulo (informativo): {store.rows_monto_null}")
     print("Columnas:", ", ".join(df.columns))
 
 
