@@ -20,6 +20,10 @@ def compute_stats(df: pl.DataFrame, metric_col: str, predicates: list[pl.Expr]) 
         lf = lf.filter(reduce(lambda a, b: a & b, predicates))
 
     col = pl.col(metric_col)
+    # Las filas con métrica nula no aportan a ninguna estadística: se excluyen
+    # antes de agregar para que `conteo` cuadre exactamente con `suma/promedio`
+    # (promedio = suma / conteo, tal como exige el enunciado).
+    lf = lf.filter(col.is_not_null())
     agg = lf.select(
         col.sum().alias("suma"),
         pl.len().alias("conteo"),
@@ -45,9 +49,7 @@ def compute_stats(df: pl.DataFrame, metric_col: str, predicates: list[pl.Expr]) 
         }
 
     return {
-        # sum() de una columna con todos sus valores nulos devuelve null;
-        # el contrato exige un número, así que se degrada a 0.0.
-        "suma": _round(row["suma"]) if row["suma"] is not None else 0.0,
+        "suma": _round(row["suma"]),
         "conteo": conteo,
         "promedio": _round(row["promedio"]),
         "minimo": _round(row["minimo"]),

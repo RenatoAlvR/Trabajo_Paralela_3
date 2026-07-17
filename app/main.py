@@ -4,6 +4,7 @@ Endpoints:
     GET  /v1/estadisticas/ventas   -> estadísticas con filtros por query params.
     POST /v1/estadisticas/ventas   -> estadísticas con filtros en el body.
 """
+import logging
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -23,8 +24,15 @@ from .errors import (
 )
 from .filters import FilterError, UnknownFilter, build_predicate
 from .loader import store
-from .schemas import PostBody, Resumen
+from .schemas import ErrorEstandar, PostBody, Resumen
 from .stats import compute_stats
+
+logger = logging.getLogger("cruzmorada")
+
+ERROR_RESPONSES = {
+    400: {"model": ErrorEstandar, "description": "Validación fallida"},
+    500: {"model": ErrorEstandar, "description": "Error interno"},
+}
 
 
 @asynccontextmanager
@@ -51,13 +59,13 @@ app = FastAPI(
 # --------------------------------------------------------------------------- #
 @app.exception_handler(ApiError)
 async def _api_error_handler(request: Request, exc: ApiError):
-    return problem_response(exc, request.method)
+    return problem_response(exc, request.method, request.url.path)
 
 
 @app.exception_handler(RequestValidationError)
 async def _request_validation_handler(request: Request, exc: RequestValidationError):
     err = validation_error("El cuerpo de la solicitud no tiene un formato válido")
-    return problem_response(err, request.method)
+    return problem_response(err, request.method, request.url.path)
 
 
 @app.exception_handler(StarletteHTTPException)
@@ -67,13 +75,24 @@ async def _http_exception_handler(request: Request, exc: StarletteHTTPException)
     # estándar del enunciado, en lugar del JSON por defecto de FastAPI.
     detail = exc.detail if isinstance(exc.detail, str) and exc.detail.strip() else None
     err = from_status(exc.status_code, detail)
-    return problem_response(err, request.method)
+    resp = problem_response(err, request.method, request.url.path)
+    # Preserva cabeceras que Starlette adjunta al HTTPException original (p.
+    # ej. "Allow" en un 405), que de otro modo se perderían al reconstruir
+    # la respuesta con el formato estándar del enunciado.
+    if exc.headers:
+        for k, v in exc.headers.items():
+            resp.headers[k] = v
+    return resp
 
 
 @app.exception_handler(Exception)
 async def _unhandled_handler(request: Request, exc: Exception):
-    err = internal_error(f"Error interno inesperado: {exc}")
-    return problem_response(err, request.method)
+    # El mensaje real de la excepción puede contener rutas, nombres de
+    # columnas u otros detalles internos: se registra en el log del
+    # servidor pero NO se expone al cliente.
+    logger.exception("Error no controlado en %s %s", request.method, request.url.path)
+    err = internal_error("Ocurrió un error interno inesperado al procesar la solicitud")
+    return problem_response(err, request.method, request.url.path)
 
 
 # --------------------------------------------------------------------------- #
@@ -101,11 +120,17 @@ def _run(predicates):
     except ApiError:
         raise
     except Exception as e:  # noqa: BLE001
-        raise internal_error(f"Error al calcular las estadísticas: {e}")
+        logger.exception("Error al calcular las estadísticas")
+        raise internal_error("Error interno al calcular las estadísticas")
 
 
 # --------------------------------------------------------------------------- #
 # Endpoints
+#
+# Nota: son `def` normales (no `async def`). El trabajo real es el `.collect()`
+# de Polars, que es CPU-bound y síncrono; FastAPI despacha las rutas `def` a un
+# threadpool, y como Polars libera el GIL durante el cómputo, las peticiones sí
+# se solapan entre sí en vez de competir por el único event loop.
 # --------------------------------------------------------------------------- #
 @app.get("/", include_in_schema=False)
 async def root():
@@ -113,8 +138,8 @@ async def root():
     return RedirectResponse(url="/docs")
 
 
-@app.get(config.API_BASE, response_model=Resumen)
-async def get_estadisticas(
+@app.get(config.API_BASE, response_model=Resumen, responses=ERROR_RESPONSES)
+def get_estadisticas(
     GENERO: Optional[str] = None,
     EDAD: Optional[str] = None,
     CANAL: Optional[str] = None,
@@ -144,9 +169,14 @@ async def get_estadisticas(
     return _run(_make_predicates(items))
 
 
-@app.post(config.API_BASE, response_model=Resumen)
-async def post_estadisticas(body: PostBody):
+@app.post(config.API_BASE, response_model=Resumen, responses=ERROR_RESPONSES)
+def post_estadisticas(body: PostBody):
     if not body.consultas:
         raise validation_error("El campo 'consultas' no puede estar vacío o nulo")
+    if len(body.consultas) > config.MAX_CONSULTAS:
+        raise validation_error(
+            f"El campo 'consultas' admite a lo sumo {config.MAX_CONSULTAS} filtros "
+            f"(se recibieron {len(body.consultas)})"
+        )
     items = [(c.consulta, c.valor) for c in body.consultas]
     return _run(_make_predicates(items))

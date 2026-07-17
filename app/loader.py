@@ -22,6 +22,7 @@ núcleos disponibles; el motor "streaming" procesa el archivo por chunks,
 evitando cargar todo el volumen de una sola vez en memoria.
 """
 import gzip
+import logging
 import re
 import unicodedata
 from datetime import date
@@ -30,6 +31,8 @@ from pathlib import Path
 import polars as pl
 
 from . import config
+
+logger = logging.getLogger("cruzmorada.loader")
 
 # Mapeo de las columnas originales a nombres canónicos. Las claves se
 # comparan tras normalizar cabeceras (_canon), de modo que "GÉNERO",
@@ -62,6 +65,15 @@ REQUIRED = {
 # Columnas numéricas: cast tolerante tras leerlas como texto.
 INT_COLS = ("sku", "unidades", "boleta", "local", "genero")
 FLOAT_COLS = ("porcentaje_descuento", "monto_aplicado")
+
+# Columnas que de verdad usan los filtros y las estadísticas (app/filters.py,
+# app/stats.py). El resto del CSV (producto, nombres, apellidos, run, boleta,
+# unidades, descuento...) se descarta tras derivar genero_label/edad: retenerlas
+# en memoria no aporta nada y por sí solas pueden ser ~40% del DataFrame.
+KEEP_COLS = (
+    "fecha", "canal", "sku", "monto_aplicado", "local",
+    "codigo_cliente", "genero_label", "edad",
+)
 
 # Extensiones de CSV reconocidas para la autodetección de archivo.
 CSV_SUFFIXES = (".csv", ".csv.gz", ".gz")
@@ -114,7 +126,8 @@ def _detect_separator(header: str) -> str:
 
 def _resolve_path(path) -> Path:
     """Devuelve el CSV a cargar; si la ruta exacta no existe, busca el mayor
-    archivo CSV/CSV.GZ dentro de la carpeta de datos."""
+    archivo CSV/CSV.GZ dentro de la carpeta de datos (dejando registro en el
+    log, para que un typo en CSV_PATH no cargue otro archivo sin que se note)."""
     path = Path(path)
     if path.exists():
         return path
@@ -125,7 +138,12 @@ def _resolve_path(path) -> Path:
     ]
     if not candidates:
         raise FileNotFoundError(f"No se encontró ningún CSV en: {search_dir}")
-    return max(candidates, key=lambda p: p.stat().st_size)
+    elegido = max(candidates, key=lambda p: p.stat().st_size)
+    logger.warning(
+        "La ruta configurada '%s' no existe; se carga en su lugar el mayor CSV de %s: %s",
+        path, search_dir, elegido,
+    )
+    return elegido
 
 
 def _rename_map(columnas) -> dict:
@@ -171,7 +189,6 @@ class DataStore:
         self.loaded = False
         self.source: Path | None = None
         self.rows_total = 0
-        self.rows_dropped = 0
         self.rows_monto_null = 0
         # Resumen estadístico global (sin filtros) precomputado al arranque.
         self.resumen_global: dict | None = None
@@ -190,13 +207,15 @@ class DataStore:
             truncate_ragged_lines=True,
         )
 
-        if gz:
-            # scan_csv no admite gzip; read_csv descomprime automáticamente.
-            lf = pl.read_csv(str(path), infer_schema=False, **read_kwargs).lazy()
-        else:
-            lf = pl.scan_csv(str(path), infer_schema=False, **read_kwargs)
-
-        existentes = lf.collect_schema().names()
+        try:
+            if gz:
+                # scan_csv no admite gzip; read_csv descomprime automáticamente.
+                lf = pl.read_csv(str(path), infer_schema=False, **read_kwargs).lazy()
+            else:
+                lf = pl.scan_csv(str(path), infer_schema=False, **read_kwargs)
+            existentes = lf.collect_schema().names()
+        except pl.exceptions.NoDataError:
+            raise ValueError(f"El archivo CSV está vacío: {path}")
         lf = lf.rename(_rename_map(existentes))
 
         columnas = set(lf.collect_schema().names())
@@ -224,16 +243,27 @@ class DataStore:
             for c in FLOAT_COLS if c in columnas
         ]
 
-        lf = lf.with_columns(exprs).with_columns(GENERO_LABEL, _edad_expr(hoy))
+        lf = (
+            lf.with_columns(exprs)
+            .with_columns(GENERO_LABEL, _edad_expr(hoy))
+            .select(list(KEEP_COLS))
+        )
 
         df = self._collect(lf, gz)
 
-        # Política: NO se descarta ninguna fila. Las métricas globales se calculan
-        # sobre TODAS las filas del archivo. Las celdas ilegibles ya quedaron como
-        # null por los casts tolerantes; una edad implausible (nacimiento corrupto)
-        # no coincidirá con un filtro EDAD, pero la fila igual cuenta en los totales.
+        # Un CSV con cabecera pero sin filas dejaría el servicio "vivo" pero
+        # respondiendo métricas vacías sin ninguna señal del problema: mejor
+        # abortar el arranque con un mensaje claro, como con columnas faltantes.
+        if df.height == 0:
+            raise ValueError(f"El CSV no contiene filas de datos (solo cabecera): {path}")
+
+        # Política: el cargador NO descarta ninguna fila; las celdas ilegibles
+        # quedan como null por los casts tolerantes. Quién cuenta en las métricas
+        # lo decide `compute_stats`: una fila con MONTO nulo no aporta a las 7
+        # estadísticas (no hay número que sumar/promediar), mientras que una
+        # fecha o edad nula solo impide que la fila matchee filtros de fecha/edad,
+        # pero sigue contando en el resto.
         self.rows_total = df.height
-        self.rows_dropped = 0
         # Solo informativo: filas cuyo monto quedó nulo (en el dataset real es 0).
         self.rows_monto_null = int(df.select(pl.col("monto_aplicado").is_null().sum()).item())
 

@@ -10,7 +10,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 
 # Ruta del CSV que se carga de forma desatendida al iniciar la aplicación.
-CSV_PATH = Path(os.getenv("CSV_PATH", str(DATA_DIR / "ventas.csv")))
+# Mismo default que run.sh, Dockerfile y data/README.md; si la ruta exacta no
+# existe, el loader busca el mayor CSV/CSV.GZ dentro de data/ (y lo loggea).
+CSV_PATH = Path(os.getenv("CSV_PATH", str(DATA_DIR / "ventas_completas.csv")))
 
 # Columna numérica sobre la que se calculan las estadísticas.
 METRIC_COLUMN = os.getenv("METRIC_COLUMN", "monto_aplicado")
@@ -24,8 +26,15 @@ STD_DDOF = int(os.getenv("STD_DDOF", "0"))
 # Nota: no se descarta ninguna fila por edad. Las métricas globales usan TODAS
 # las filas del archivo; la edad solo se usa cuando se aplica el filtro EDAD.
 
-# Cantidad de decimales en la respuesta (None = sin redondear).
-ROUND_DECIMALS = int(os.getenv("ROUND_DECIMALS", "2"))
+# Cantidad de decimales en la respuesta. ROUND_DECIMALS=none desactiva el
+# redondeo (comparar contra la cadena, no contra el objeto None: viene de una
+# variable de entorno, siempre es texto).
+_round_decimals_env = os.getenv("ROUND_DECIMALS", "2").strip()
+ROUND_DECIMALS = None if _round_decimals_env.lower() == "none" else int(_round_decimals_env)
 
 # Ruta base de la API.
 API_BASE = "/v1/estadisticas/ventas"
+
+# Cantidad máxima de filtros en un POST. Sin límite, un AND anidado con miles
+# de predicados puede desbordar el stack nativo del motor de Polars (DoS).
+MAX_CONSULTAS = int(os.getenv("MAX_CONSULTAS", "100"))

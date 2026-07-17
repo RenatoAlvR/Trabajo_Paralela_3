@@ -3,8 +3,6 @@ from datetime import datetime, timezone
 
 from fastapi.responses import JSONResponse
 
-from . import config
-
 # Media type estándar para Problem Detail (RFC 9457).
 PROBLEM_JSON = "application/problem+json"
 
@@ -30,10 +28,10 @@ def _now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "000Z"
 
 
-def error_body(status, detail, title, error_code, error_label, method):
+def error_body(status, detail, title, error_code, error_label, method, instance):
     return {
         "detail": detail,
-        "instance": config.API_BASE,
+        "instance": instance,
         "status": status,
         "title": title,
         "type": _STATUS_TYPE.format(status),
@@ -44,15 +42,16 @@ def error_body(status, detail, title, error_code, error_label, method):
     }
 
 
-def problem_response(err, method):
+def problem_response(err, method, instance):
     """Respuesta HTTP de error como Problem Detail (RFC 9457): el cuerpo estándar
     del enunciado servido con el media type `application/problem+json`. Centraliza
-    la construcción usada por todos los manejadores de excepciones."""
+    la construcción usada por todos los manejadores de excepciones. `instance` es
+    la ruta real de la petición (`request.url.path`), no un valor fijo."""
     return JSONResponse(
         status_code=err.status,
         media_type=PROBLEM_JSON,
         content=error_body(
-            err.status, err.detail, err.title, err.error_code, err.error_label, method
+            err.status, err.detail, err.title, err.error_code, err.error_label, method, instance
         ),
     )
 

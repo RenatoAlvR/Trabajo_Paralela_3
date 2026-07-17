@@ -5,12 +5,13 @@ La suite se ejecuta exclusivamente contra el CSV real de producción
 
 Para verificar los resultados de la API sin depender de Polars, un "oráculo"
 independiente implementado con la librería estándar (csv + math) recorre el
-mismo archivo una vez por sesión con la misma política del cargador (NO se
-descarta ninguna fila; las métricas globales usan TODAS las filas) y acumula
-los montos de los subconjuntos que usan las pruebas. Así, la API (Polars,
-paralelo) y el oráculo (Python puro, secuencial) deben coincidir sobre los
-~3,2 millones de registros: dos implementaciones independientes validándose
-mutuamente.
+mismo archivo una vez por sesión con la misma política de `compute_stats`
+(una fila cuenta si su MONTO es parseable; FECHA y FECHA_NACIMIENTO son
+opcionales y solo afectan qué filtros matchea, no si la fila cuenta en el
+total) y acumula los montos de los subconjuntos que usan las pruebas. Así, la
+API (Polars, paralelo) y el oráculo (Python puro, secuencial) deben coincidir
+sobre los ~3,2 millones de registros: dos implementaciones independientes
+validándose mutuamente.
 
 Si el CSV real no está en ``data/``, las pruebas de API se omiten con un
 mensaje indicando cómo obtenerlo (ver README).
@@ -92,10 +93,10 @@ def _edad(nacimiento: date, hoy: date) -> int:
 
 @dataclass
 class _Fila:
-    fecha: datetime
-    fecha_s: str
+    fecha: datetime | None
+    fecha_s: str | None
     monto: float
-    edad: int
+    edad: int | None
     canal: str
     uuid: str
     genero: int | None
@@ -121,17 +122,32 @@ def _indice(header) -> dict:
 
 
 def _parse(row, idx, hoy) -> _Fila | None:
-    """Misma política del cargador: NO se descarta ninguna fila. Solo devuelve
-    None si el monto o las fechas no son parseables (no ocurre en el dataset
-    real). La edad se calcula pero NO filtra filas: se usan todas."""
+    """Misma política del cargador (y de `compute_stats`): una fila solo aporta
+    a las estadísticas si su MONTO es parseable; si no, se descarta por completo
+    (igual que la API, que ahora excluye filas con métrica nula antes de agregar).
+    FECHA y FECHA_NACIMIENTO son opcionales: si no son parseables, la fila sigue
+    contando en los totales pero no matchea filtros de fecha/edad (una celda
+    nula nunca matchea un predicado `==`/`>=`/`<=` en Polars, así que el oráculo
+    replica ese comportamiento con `None`)."""
+    try:
+        monto = float(row[idx["monto_aplicado"]].strip())
+    except (ValueError, IndexError):
+        return None
+
+    fecha_s = None
+    fecha = None
     try:
         fecha_s = row[idx["fecha"]].strip()
         fecha = datetime.fromisoformat(fecha_s)
-        monto = float(row[idx["monto_aplicado"]].strip())
-        nacimiento = date.fromisoformat(row[idx["fecha_nacimiento"]].strip())
     except (ValueError, IndexError):
-        return None
-    edad = _edad(nacimiento, hoy)
+        fecha_s = None
+
+    edad = None
+    try:
+        nacimiento = date.fromisoformat(row[idx["fecha_nacimiento"]].strip())
+        edad = _edad(nacimiento, hoy)
+    except (ValueError, IndexError):
+        pass
 
     def _int(col):
         try:
@@ -190,11 +206,23 @@ def oracle(real_csv) -> Oracle:
         idx = _indice(next(rd))
 
         # Fase 1: elegir la fila objetivo (primera totalmente parseable) que
-        # define los valores de EDAD/SKU/LOCAL/UUID/FECHA a filtrar.
+        # define los valores de EDAD/SKU/LOCAL/UUID/FECHA a filtrar. Debe tener
+        # TODOS esos campos no nulos, porque se usan como valores de filtro en
+        # las pruebas (edad0/sku0/local0/uuid0/fecha0) y en las comparaciones de
+        # fecha del oráculo: un objetivo con fecha o edad nula rompería tanto la
+        # comparación `p.fecha >= objetivo.fecha` como los tests que envían el
+        # valor al endpoint.
         objetivo = None
         for row in rd:
             p = _parse(row, idx, hoy)
-            if p and p.genero is not None and p.sku is not None and p.local is not None:
+            if (
+                p
+                and p.genero is not None
+                and p.sku is not None
+                and p.local is not None
+                and p.edad is not None
+                and p.fecha is not None
+            ):
                 objetivo = p
                 break
         assert objetivo, "El CSV real no tiene ninguna fila completamente válida"
@@ -218,7 +246,7 @@ def oracle(real_csv) -> Oracle:
                 sub["masc"].append(m)
             if p.canal == "POS":
                 sub["pos"].append(m)
-            if p.edad == objetivo.edad:
+            if p.edad is not None and p.edad == objetivo.edad:
                 sub["edad0"].append(m)
             if p.sku == objetivo.sku:
                 sub["sku0"].append(m)
@@ -226,9 +254,9 @@ def oracle(real_csv) -> Oracle:
                 sub["uuid0"].append(m)
             if p.local == objetivo.local:
                 sub["local0"].append(m)
-            if p.fecha >= objetivo.fecha:
+            if p.fecha is not None and p.fecha >= objetivo.fecha:
                 sub["desde"].append(m)
-            if p.fecha <= objetivo.fecha:
+            if p.fecha is not None and p.fecha <= objetivo.fecha:
                 sub["hasta"].append(m)
 
     return Oracle(

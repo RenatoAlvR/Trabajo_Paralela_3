@@ -62,12 +62,13 @@ def test_no_descarta_filas_celdas_corruptas_quedan_null(tmp_path):
     ds = DataStore().load(p)
     # NINGUNA fila se descarta: las 7 se conservan.
     assert ds.rows_total == 7
-    assert ds.rows_dropped == 0
     assert ds.df.height == 7
     # Las celdas ilegibles quedan como null, sin romper la carga.
     assert ds.df["monto_aplicado"].null_count() == 1
     assert ds.df["fecha"].null_count() == 1
-    assert ds.df["fecha_nacimiento"].null_count() == 1
+    # `fecha_nacimiento` no se retiene (solo se usa para derivar `edad`); un
+    # nacimiento ilegible se refleja como `edad` nula.
+    assert ds.df["edad"].null_count() == 1
     assert ds.df["local"].null_count() == 1
     # El género ilegible queda como "No especificado".
     assert "No especificado" in ds.df["genero_label"].to_list()
@@ -80,7 +81,10 @@ def test_cabecera_con_bom_tilde_y_punto_y_coma(tmp_path):
     p.write_text(contenido, encoding="utf-8")
     ds = DataStore().load(p)
     assert ds.df.height == 1
-    assert {"fecha", "canal", "genero", "genero_label", "monto_aplicado"} <= set(ds.df.columns)
+    # Solo se retienen las columnas que usan filtros/estadísticas; `genero`
+    # crudo se consume al derivar `genero_label` y no se conserva.
+    assert {"fecha", "canal", "genero_label", "monto_aplicado"} <= set(ds.df.columns)
+    assert "genero" not in ds.df.columns
     assert ds.df["genero_label"][0] == "Masculino"
 
 
