@@ -74,6 +74,24 @@ def test_no_descarta_filas_celdas_corruptas_quedan_null(tmp_path):
     assert "No especificado" in ds.df["genero_label"].to_list()
 
 
+def test_monto_negativo_se_marca_como_corrupto(tmp_path):
+    """Un MONTO APLICADO negativo se trata como corrupto (null) y queda fuera de
+    las métricas; el 0 es válido y se conserva. La fila no se descarta."""
+    p = tmp_path / "ventas.csv"
+    _write(p, [
+        _fila(),                                     # 12500.0 válido
+        _fila(**{"MONTO APLICADO": "-500.0"}),       # negativo -> corrupto -> null
+        _fila(**{"MONTO APLICADO": "0"}),            # cero -> válido, se conserva
+    ])
+    ds = DataStore().load(p)
+    assert ds.df.height == 3                          # ninguna fila se descarta
+    assert ds.df["monto_aplicado"].null_count() == 1  # solo el negativo es null
+    assert ds.rows_monto_null == 1
+    montos = ds.df["monto_aplicado"].to_list()
+    assert 0.0 in montos                              # el 0 se conserva (válido)
+    assert -500.0 not in montos                       # el negativo se anuló
+
+
 def test_cabecera_con_bom_tilde_y_punto_y_coma(tmp_path):
     """BOM UTF-8 + cabecera GÉNERO con tilde + separador ';' se autodetectan."""
     p = tmp_path / "ventas.csv"

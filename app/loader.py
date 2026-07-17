@@ -245,6 +245,15 @@ class DataStore:
 
         lf = (
             lf.with_columns(exprs)
+            # Un MONTO APLICADO negativo es corrupto (un cobro no puede ser < 0):
+            # se marca como null igual que un valor ilegible, para que quede
+            # fuera de las 7 métricas. El 0 es válido (una venta puede ser gratis).
+            .with_columns(
+                pl.when(pl.col("monto_aplicado") < 0)
+                .then(pl.lit(None, dtype=pl.Float64))
+                .otherwise(pl.col("monto_aplicado"))
+                .alias("monto_aplicado")
+            )
             .with_columns(GENERO_LABEL, _edad_expr(hoy))
             .select(list(KEEP_COLS))
         )
@@ -264,8 +273,14 @@ class DataStore:
         # fecha o edad nula solo impide que la fila matchee filtros de fecha/edad,
         # pero sigue contando en el resto.
         self.rows_total = df.height
-        # Solo informativo: filas cuyo monto quedó nulo (en el dataset real es 0).
+        # Filas con MONTO APLICADO corrupto: ilegible (cast fallido) o negativo.
+        # Quedan como null y `compute_stats` las excluye de las 7 métricas.
         self.rows_monto_null = int(df.select(pl.col("monto_aplicado").is_null().sum()).item())
+        if self.rows_monto_null:
+            logger.warning(
+                "%d fila(s) con MONTO APLICADO corrupto (ilegible o negativo); "
+                "se excluyen de las métricas.", self.rows_monto_null,
+            )
 
         self.df = df
         self.loaded = True

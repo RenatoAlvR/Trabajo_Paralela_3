@@ -96,6 +96,32 @@ async def _unhandled_handler(request: Request, exc: Exception):
 
 
 # --------------------------------------------------------------------------- #
+# Middleware: límite de tamaño del cuerpo
+# --------------------------------------------------------------------------- #
+@app.middleware("http")
+async def _limit_body_size(request: Request, call_next):
+    # Rechaza cuerpos por encima de MAX_BODY_BYTES ANTES de leerlos en memoria,
+    # devolviendo 413 en el formato estándar. Se inspecciona la cabecera
+    # Content-Length (que los clientes normales envían). Una petición con
+    # codificación 'chunked' (sin Content-Length) no se acota por aquí:
+    # limitación documentada que en producción cubre el proxy inverso.
+    cl = request.headers.get("content-length")
+    if cl is not None:
+        try:
+            size = int(cl)
+        except ValueError:
+            size = None
+        if size is not None and size > config.MAX_BODY_BYTES:
+            err = from_status(
+                413,
+                f"El cuerpo de la solicitud ({size} bytes) excede el máximo "
+                f"permitido de {config.MAX_BODY_BYTES} bytes",
+            )
+            return problem_response(err, request.method, request.url.path)
+    return await call_next(request)
+
+
+# --------------------------------------------------------------------------- #
 # Lógica compartida
 # --------------------------------------------------------------------------- #
 def _make_predicates(items):

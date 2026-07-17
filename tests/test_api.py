@@ -270,3 +270,20 @@ def test_sin_coincidencias_por_fecha_futura(client):
     r = client.get(ENDPOINT, params={"FECHA_DESDE": "2099-01-01T00:00:00"})
     assert r.status_code == 200
     assert r.json()["conteo"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# Límite de tamaño del cuerpo (413)
+# --------------------------------------------------------------------------- #
+def test_body_demasiado_grande_413(client):
+    """Un cuerpo por encima de 1 MB se rechaza con 413 (CDG) sin procesarse."""
+    grande = "x" * 1_000_001
+    r = client.post(ENDPOINT, json={"consultas": [{"consulta": "CANAL", "valor": grande}]})
+    assert r.status_code == 413
+    body = r.json()
+    assert set(body) == ERROR_KEYS
+    assert body["status"] == 413
+    assert body["errorCode"] == "CDG"
+    assert body["errorLabel"] == "Carga Demasiado Grande"
+    assert body["method"] == "POST"
+    assert r.headers["content-type"].startswith("application/problem+json")

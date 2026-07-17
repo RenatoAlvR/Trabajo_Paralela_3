@@ -123,7 +123,7 @@ def _indice(header) -> dict:
 
 def _parse(row, idx, hoy) -> _Fila | None:
     """Misma política del cargador (y de `compute_stats`): una fila solo aporta
-    a las estadísticas si su MONTO es parseable; si no, se descarta por completo
+    a las estadísticas si su MONTO es parseable y no negativo; si no, se descarta
     (igual que la API, que ahora excluye filas con métrica nula antes de agregar).
     FECHA y FECHA_NACIMIENTO son opcionales: si no son parseables, la fila sigue
     contando en los totales pero no matchea filtros de fecha/edad (una celda
@@ -132,6 +132,9 @@ def _parse(row, idx, hoy) -> _Fila | None:
     try:
         monto = float(row[idx["monto_aplicado"]].strip())
     except (ValueError, IndexError):
+        return None
+    if monto < 0:
+        # MONTO negativo = corrupto: no cuenta, igual que la API.
         return None
 
     fecha_s = None

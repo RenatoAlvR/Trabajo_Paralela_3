@@ -38,3 +38,9 @@ API_BASE = "/v1/estadisticas/ventas"
 # Cantidad máxima de filtros en un POST. Sin límite, un AND anidado con miles
 # de predicados puede desbordar el stack nativo del motor de Polars (DoS).
 MAX_CONSULTAS = int(os.getenv("MAX_CONSULTAS", "100"))
+
+# Tamaño máximo del cuerpo de una petición, en bytes (por defecto 1 MB). Un
+# cuerpo mayor se rechaza con 413 ANTES de leerlo en memoria, para que una sola
+# petición gigante no agote la RAM del servidor (DoS). Una lista de filtros
+# legítima pesa unos pocos KB, así que 1 MB es holgado.
+MAX_BODY_BYTES = int(os.getenv("MAX_BODY_BYTES", str(1_000_000)))
