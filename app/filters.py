@@ -1,8 +1,14 @@
 """Validación y construcción de filtros -> predicados de Polars."""
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import polars as pl
+
+# El enunciado especifica que FECHA viene en formato ISO 8601 UTC-4. La
+# columna 'fecha' se almacena naive (sin zona) en ese huso; un filtro que
+# llegue con offset explícito debe convertirse a UTC-4 antes de comparar,
+# o el resultado queda desplazado hasta 24 h respecto de lo esperado.
+_DATA_TZ = timezone(timedelta(hours=-4))
 
 ALLOWED_GENERO = {"No especificado", "Masculino", "Femenino", "Otro"}
 ALLOWED_CANAL = {"POS", "WEB", "APP", "CCT", "APR", "WPR"}
@@ -40,11 +46,17 @@ def _to_int(valor, label):
 
 
 def _to_datetime(valor, label):
+    s = str(valor)
+    if s.endswith("Z") or s.endswith("z"):
+        s = s[:-1] + "+00:00"
     try:
-        dt = datetime.fromisoformat(str(valor).replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(s)
     except (ValueError, TypeError):
         raise FilterError(f"El valor '{valor}' no es una fecha ISO-8601 válida para {label}")
-    # La columna 'fecha' es naive; se comparan sin zona horaria.
+    if dt.tzinfo is not None:
+        # Convierte al huso de los datos (UTC-4) antes de quitar la zona;
+        # así un offset explícito no queda comparado como si fuera naive.
+        dt = dt.astimezone(_DATA_TZ)
     return dt.replace(tzinfo=None)
 
 

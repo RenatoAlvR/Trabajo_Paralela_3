@@ -50,9 +50,11 @@ GNU/Linux mediante `pip`.
 - **Métricas precomputadas**: el resumen global (sin filtros) se calcula una
   sola vez al arranque; un `GET` sin filtros lo devuelve al instante, mientras
   que `GET` con filtros y `POST` calculan dinámicamente.
-- **Errores estandarizados**: todas las respuestas de error (400, 404, 405,
-  406, 413, 415, 500, 503) siguen el formato exacto del enunciado (estilo
-  RFC 7807 extendido con `errorCode`, `errorLabel`, `timestamp` y `method`).
+- **Errores estandarizados**: toda respuesta de error (400 validación, 404
+  ruta inexistente, 405 método no permitido, 500 error interno, y cualquier
+  otro código HTTP que el framework emita) sigue el formato exacto del
+  enunciado (estilo RFC 7807 extendido con `errorCode`, `errorLabel`,
+  `timestamp` y `method`), incluyendo cabeceras como `Allow` en un 405.
 
 ## Docker (reproducibilidad)
 
@@ -154,7 +156,9 @@ El servidor queda disponible en `http://localhost:8000`:
 
 Configuración opcional por variables de entorno: `CSV_PATH`, `METRIC_COLUMN`
 (por defecto `monto_aplicado`), `USE_STREAMING` (`1`/`0`), `STD_DDOF`
-(`0` = poblacional), `ROUND_DECIMALS` (por defecto `2`).
+(`0` = poblacional), `ROUND_DECIMALS` (por defecto `2`; `none` desactiva el
+redondeo), `MAX_CONSULTAS` (por defecto `100`: límite de filtros por POST,
+para evitar que un cliente envíe miles de filtros y agote el servidor).
 
 ## Uso de la API
 
@@ -234,7 +238,7 @@ curl -s -X POST http://localhost:8000/v1/estadisticas/ventas \
   "status": 400,
   "title": "Bad Request",
   "type": "https://developer.mozilla.org/es/docs/Web/HTTP/Reference/Status/400",
-  "timestamp": "2026-06-30T20:44:49.201437Z",
+  "timestamp": "2026-06-30T20:44:49.201437123Z",
   "errorCode": "VF",
   "errorLabel": "Validación Fallida",
   "method": "POST"
@@ -247,29 +251,25 @@ ejemplos de payloads y respuestas.
 
 ## Verificación con el dataset real
 
-El servicio fue verificado contra el CSV real de producción (3.242.878
+El servicio fue probado contra el CSV real de producción (~3,24 millones de
 registros, ~1,5 GB descomprimido):
 
-- Carga desatendida al arranque: **3.240.068 filas válidas** procesadas; las
-  2.810 filas con fecha de nacimiento corrupta (0,09 %) se descartaron y
-  contabilizaron automáticamente, sin abortar la carga.
-- La cabecera real `GÉNERO` (con tilde) se normalizó correctamente.
+- Carga desatendida al arranque: se procesan **todas** las filas del archivo
+  (política actual: ninguna fila se descarta por celdas corruptas). Una fecha
+  de nacimiento o una fecha de venta ilegible quedan como `null` y esa fila
+  simplemente no coincide con los filtros `EDAD`/`FECHA_DESDE`/`FECHA_HASTA`,
+  pero sí se conserva y cuenta en el resto de las estadísticas.
+- Solo las filas cuyo `MONTO APLICADO` es ilegible quedan fuera de las 7
+  métricas (no tienen un valor numérico que sumar/promediar); en el dataset
+  real esto no ocurre (0 filas con monto nulo).
+- La cabecera real `GÉNERO` (con tilde) se normaliza correctamente.
 - Consultas GET/POST sobre los 3,2 millones de filas —incluida la mediana,
   la agregación más costosa— responden en menos de 1 segundo gracias al
   cómputo paralelo de Polars.
 
-**Resultado obtenido sobre el universo total de ventas reales (GET `/v1/estadisticas/ventas`):**
-```json
-{
-  "suma": 32985462184.0,
-  "conteo": 3240068,
-  "promedio": 10180.48,
-  "minimo": 15.0,
-  "maximo": 226476.0,
-  "mediana": 7662.0,
-  "desviacion_estandar": 14451.28
-}
-```
+El resultado exacto del GET sin filtros (`suma`, `conteo`, etc.) depende del
+archivo real que se cargue; ejecute `curl http://localhost:8000/v1/estadisticas/ventas`
+tras levantar el servicio para obtenerlo sobre su copia del dataset.
 
 
 ## Pruebas automatizadas

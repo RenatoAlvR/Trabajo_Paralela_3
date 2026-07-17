@@ -25,3 +25,17 @@ class Resumen(BaseModel):
     maximo: Optional[float]
     mediana: Optional[float]
     desviacion_estandar: Optional[float]
+
+
+class ErrorEstandar(BaseModel):
+    """Formato de error estándar del enunciado (Problem Detail extendido)."""
+
+    detail: str = Field(..., examples=["El valor 'qwerqwer' no es un número entero válido para LOCAL"])
+    instance: str = Field(..., examples=["/v1/estadisticas/ventas"])
+    status: int = Field(..., examples=[400])
+    title: str = Field(..., examples=["Bad Request"])
+    type: str = Field(..., examples=["https://developer.mozilla.org/es/docs/Web/HTTP/Reference/Status/400"])
+    timestamp: str = Field(..., examples=["2026-06-30T20:44:49.201437123Z"])
+    errorCode: str = Field(..., examples=["VF"])
+    errorLabel: str = Field(..., examples=["Validación Fallida"])
+    method: str = Field(..., examples=["POST"])
