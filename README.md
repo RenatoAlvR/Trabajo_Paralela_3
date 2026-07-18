@@ -1,292 +1,111 @@
-# Cruz Morada — Servicio ReST de Resumen Estadístico de Ventas
+# Trabajo #3 - Computación Paralela y Distribuida
+## API Rest para Cruz Morada
+### Integrantes: 
+- Renato Álvarez Ramos
+- Cristopher Retamales Pedreros
 
-Servicio REST que procesa el archivo CSV consolidado de ventas de Cruz Morada
-(cadena de farmacias) y expone un resumen estadístico integral —suma, conteo,
-promedio, mínimo, máximo, mediana y desviación estándar— sobre el
-`MONTO APLICADO`, con filtros dinámicos por género, edad, canal, producto,
-cliente, local y rango de fechas.
+# Resumen del proyecto
+- Servicio Rest que procesa el archivo CSV ventas_completas.csv y permite realizar consultas sobre esta aplicando distintos filtros, además de calcular y mostrar las estadísticas globales de este.
 
-## Tecnologías
+# Tecnologías
+- FastAPI: Para la creación de la API y endpoints, además de la documentación Swagger
+- Uvicorn: Servidor de la aplicación
+- Polars: Lectura y procesamiento paralelo de los datos, permite manejar las (aprox) 3,24 millones de filas que contiene el csv.
+- Docker: Para el despliegue y ejecución del servicio, asegurando reproducibilidad, en este caso se utiliza un entorno de Ubuntu 24.04 LTS.
+- Todas las dependencias son Open-Source, descargables mediante pip (Python Package Index) y listadas en requirements.txt
 
-| Componente | Tecnología | Rol |
-|---|---|---|
-| Framework web | [FastAPI](https://fastapi.tiangolo.com/) | Endpoints REST, validación y documentación Swagger automática |
-| Servidor ASGI | [Uvicorn](https://www.uvicorn.org/) | Servidor de aplicación |
-| Procesamiento de datos | [Polars](https://pola.rs/) | Lectura y agregación paralela del CSV |
-| Pruebas | pytest + httpx (`TestClient`) | Suite de pruebas automatizadas |
-
-Todas las herramientas son open source e instalables de forma nativa en
-GNU/Linux mediante `pip`.
-
-## Decisiones de diseño
-
-- **Carga desatendida**: el CSV se procesa automáticamente al iniciar la
-  aplicación (evento *lifespan* de FastAPI). No se requiere intervención
-  manual; los datos quedan disponibles para GET y POST desde el arranque.
-  También existe una alternativa por CLI: `python scripts/load_data.py`.
-- **Procesamiento paralelo y streaming**: Polars ejecuta la lectura del CSV y
-  las agregaciones en paralelo sobre todos los núcleos disponibles. La carga
-  usa *lazy evaluation* (`scan_csv` + plan de ejecución diferido) con el motor
-  **streaming**, que procesa el archivo por *chunks* sin materializar todo el
-  volumen de una sola vez, manteniendo bajo el consumo de memoria durante la
-  ingesta.
-- **Almacenamiento en memoria**: tras el tipado (fechas, cálculo de edad,
-  etiquetado de género), el DataFrame queda residente en memoria para
-  responder consultas en milisegundos. Cada
-  consulta se ejecuta como un plan lazy de Polars (filtros + 7 agregaciones en
-  una sola pasada paralela).
-- **Autodetección de formato**: se detectan automáticamente el separador
-  (`,`, `;`, tab, `|`) y la compresión gzip. Las cabeceras se normalizan
-  (BOM, espacios, mayúsculas y tildes), por lo que se aceptan `GENERO` y
-  `GÉNERO` indistintamente.
-- **Tolerancia a datos corruptos**: el CSV se lee sin inferencia de tipos
-  (todo como texto) y cada columna se convierte con *casts* tolerantes: una
-  celda ilegible se vuelve `null` en lugar de abortar la carga completa. **No se
-  descarta ninguna fila**: las métricas globales se calculan sobre TODAS las
-  filas del archivo; la edad solo se usa cuando se aplica el filtro `EDAD`. Las
-  líneas con campos de más se truncan. Los UUID de cliente se normalizan a
-  minúsculas (son case-insensitive), y los filtros validan rangos numéricos
-  antes de tocar los datos.
-- **Métricas precomputadas**: el resumen global (sin filtros) se calcula una
-  sola vez al arranque; un `GET` sin filtros lo devuelve al instante, mientras
-  que `GET` con filtros y `POST` calculan dinámicamente.
-- **Errores estandarizados**: toda respuesta de error (400 validación, 404
-  ruta inexistente, 405 método no permitido, 500 error interno, y cualquier
-  otro código HTTP que el framework emita) sigue el formato exacto del
-  enunciado (estilo RFC 7807 extendido con `errorCode`, `errorLabel`,
-  `timestamp` y `method`), incluyendo cabeceras como `Allow` en un 405.
-
-## Docker (reproducibilidad)
-
-La imagen se construye sobre **Ubuntu 24.04 LTS** (Python 3.12). El CSV **no** se
-copia a la imagen: se monta como volumen desde `./data`.
+# Ejecución
 
 ```bash
-# Coloca el CSV en ./data/ventas_completas.csv y luego:
 docker compose up --build
 ```
-
-El servicio queda en `http://localhost:8000` (Swagger en `/docs`). La carga del
-CSV ocurre de forma desatendida al iniciar el contenedor. Alternativa sin
-compose:
-
-```bash
-docker build -t cruzmorada-rest .
-docker run --rm -p 8000:8000 -v "$(pwd)/data:/app/data:ro" cruzmorada-rest
-```
-
-## Estructura del proyecto
-
-```
-app/
-  main.py       # Endpoints GET/POST y manejadores de error
-  loader.py     # Carga desatendida y paralela del CSV (Polars)
-  filters.py    # Validación de filtros -> predicados de Polars
-  stats.py      # Cálculo de las 7 métricas
-  errors.py     # Formato estándar de errores (400 VF / 500 IE)
-  schemas.py    # Modelos Pydantic (documentados en Swagger)
-  config.py     # Configuración por variables de entorno
-scripts/
-  load_data.py        # Carga por CLI (alternativa al arranque)
-tests/
-  conftest.py   # Oráculo independiente sobre el CSV real + TestClient
-  test_api.py   # Suite de pruebas de la API (contra datos reales)
-  test_loader.py # Defensas del cargador frente a CSVs corruptos
-datos.json      # Datos de prueba: payloads y respuestas de ejemplo
-run.sh          # Arranque desatendido del servidor
-```
-
-## Requisitos
-
-- GNU/Linux (probado también en Windows/macOS).
-- Python ≥ 3.10 con `venv` y `pip`.
-
-## Instalación (GNU/Linux)
-
-```bash
-# 1. Clonar / entrar al proyecto
-cd Trabajo_Paralela_3
-
-# 2. Crear y activar el entorno virtual
-python3 -m venv .venv
-source .venv/bin/activate
-
-# 3. Instalar dependencias
+- De esta manera se construye la imagen Docker y se inicia el servicio, dejando expuesto el puerto 8000.
+- La API por ende queda accesible mediante http://localhost:8000
+- El servicio carga los datos de manera desatendida al iniciar, sólo requiere que el archivo ventas_completas.csv se encuentre en la carpeta data.
+- Mientras esté funcionando permite realizar consultas sobre los datos. Ya sean métricas globales (pre-computadas para respuesta en O(1)) o filtradas según el parámetro elegido.
+- Los cálculos se realizan en base a la columna MONTO APLICADO.
+- Para ejecutar en local (sin Docker) puedes ejecutar el siguiente comando en la terminal (asegurarse de tener las dependencias instaladas): 
+```bash 
 pip install -r requirements.txt
-```
-
-## Datos de entrada
-
-El servicio trabaja exclusivamente con el CSV real del enunciado (carpeta
-Drive del curso). Descárguelo y déjelo dentro de `data/`:
-
-```bash
-# https://drive.google.com/file/d/15jLBlJ9eMQSoHsoCMnFWBGopr98FIHlK/view?usp=sharing
-mv ~/Descargas/ventas_completas.csv.gz data/
-```
-
-Se acepta el archivo comprimido (`.gz`) directamente, pero para archivos de
-este volumen (~3,2 millones de filas) se recomienda descomprimirlo: así la
-carga usa el motor streaming de Polars, con un consumo de memoria muy
-inferior:
-
-```bash
-python -c "import gzip, shutil; shutil.copyfileobj(gzip.open('data/ventas_completas.csv.gz','rb'), open('data/ventas_completas.csv','wb'))"
-```
-
-La ruta es configurable con la variable de entorno `CSV_PATH`; si la ruta
-configurada no existe, el servicio busca automáticamente el CSV de mayor
-tamaño dentro de `data/`. El separador, la compresión y las cabeceras (con o
-sin tilde) se autodetectan.
-
-## Ejecución
-
-Arranque desatendido (carga el CSV automáticamente al iniciar):
-
-```bash
 ./run.sh
-# o con una ruta específica:
-CSV_PATH=data/ventas.csv ./run.sh
 ```
+- El servicio se detiene manualmente con CTRL + C en la terminal donde se ejecuta
 
-El servidor queda disponible en `http://localhost:8000`:
+# Documentación API
+- La documentación Swagger se encuentra disponible en http://localhost:8000/docs
 
-- **Swagger UI**: <http://localhost:8000/docs>
-- **OpenAPI**: <http://localhost:8000/openapi.json>
+# Endpoints
+- `GET /v1/estadisticas/ventas`: Consultas mediante parámetros
+- `POST /v1/estadisticas/ventas`: Filtra en un cuerpo JSON
+- `GET /`: Redirige a /docs
 
-Configuración opcional por variables de entorno: `CSV_PATH`, `METRIC_COLUMN`
-(por defecto `monto_aplicado`), `USE_STREAMING` (`1`/`0`), `STD_DDOF`
-(`0` = poblacional), `ROUND_DECIMALS` (por defecto `2`; `none` desactiva el
-redondeo), `MAX_CONSULTAS` (por defecto `100`: límite de filtros por POST,
-para evitar que un cliente envíe miles de filtros y agote el servidor).
+# Otras mecánicas
+- El programa se asegura de que los datos sean correctos, si el csv no contiene la columna MONTO APLICADO, no se generarán estadísticas y el programa termina con un error
+- Los datos aceptados son datos parseables mediante polars, en caso contrario, se lanzará un error
+- En caso de que el monto sea negativo (<0) se considerará corrupto
+- También se limita el tamaño del cuerpo de la consulta a máximo 1 mb, esto para evitar ataques DoS sin autenticación (enviar un cuerpo demasiado grande que agote los recursos)
 
-## Uso de la API
+# Configuración
+- Mediante el archivo config.py se pueden configurar distintos parámetros, como:
+- Ruta del CSV
+- Columna sobre la cual se cálculan las estadísticas
+- Uso de desviación estándar poblacional o muestral
+- Número de consultas máximas
+- Tamaño del cuerpo de consulta máximo
+- Ruta base de la API
+- Entre otras
 
-Ruta base: `GET|POST /v1/estadisticas/ventas`
+# Loader
+- Polars utiliza evaluación perezosa con el motor streaming, leyendo por chunks, de manera paralela y utilizando todos los núcleos disponibles.
+- Separa los campos usando ;,|, tab o coma como separador
+- Se normalizan las cabeceras
+- Esto es automático, sin intervención del usuario
+- Se considera MONTO APLICADO como corrupto si el valor es negativo o no es parseable, SÓLO en ese caso se excluyen de las métricas (no ocurre en este csv, pero en caso de que se pruebe con otros datos, está ahí)
+- En caso de que otras columnas estén corruptas, no se excluyen de las métricas globales, sólo quedan excluidas de las filtradas (ya que no cumplen los parámetros), por ejemplo la edad tiene aprox. 2800 filas con edades fuera de rango, estas se consideran en las métricas globales, pero se excluiran de las filtradas, a menos que las busques especificamente
+- Luego de generar las edades y la genero_label (genero en terminos númericos), se retienen sólo 8 columnas (fecha, canal, sku, monto_aplicado, local, codigo_cliente, genero_label, edad) y se descarta el resto, ahorrando un 40% (aprox) de memoria y evitando guardar información personal.
+- Si falta alguna columna esencial, se aborta el arranque. Si el archivo está vacío pero válido (sólo los headers) se envía un error correspondiente.
+- Si el CSV_PATH no está definido o no existe, se carga el csv más grande de la carpeta /data
 
-### Filtros soportados
+# Cálculo de métricas
+- Se realiza aplicando los filtros seleccionados combinandolos con AND
+- Excluye las filas que tengan valor NULL en la columna MONTO APLICADO (ninguna en este caso)
+- Calcula las metrica globales apenas carga el archivo, dejando los resultados precomputados
 
-| Filtro | Valores |
-|---|---|
-| `GENERO` | `No especificado`, `Masculino`, `Femenino`, `Otro` |
-| `EDAD` | Entero (edad exacta del cliente) |
-| `CANAL` | `POS`, `WEB`, `APP`, `CCT`, `APR`, `WPR` |
-| `CODIGO_PRODUCTO` | Entero (SKU) |
-| `ID_PERSONA` | UUID del cliente |
-| `LOCAL` | Entero (número de local) |
-| `FECHA_DESDE` / `FECHA_HASTA` | Fecha ISO-8601 (inclusive) |
+# Filtros
+- Genero (GENERO): No especificado, Masculino, Femenino u Otro
+- Edad (EDAD): de tipo integer
+- Canal (CANAL): Puede ser POS, WEB, APP, CCT, APR o WPR
+- Codigo de Producto (CODIGO_PRODUCTO): Integer
+- ID (ID_PERSONA): UUID del cliente
+- Local (LOCAL): Integer
+- Fecha desde y hasta (FECHA_DESDE y FECHA_HASTA): ISO 8601
+- Sin filtros: métricas globales
+- Los valores de los filtros si son case sensitive
 
-Las consultas pueden hacerse sin filtros o con cualquier combinación de ellos.
+# Manejo de errores
+- Todos los errores devuelven un problem detail (RFC 9457) con 9 campos y media type application/problem+json
+- Campos: detail, instance, status, title, type, timestamp, errorCode, errorLabel y method
+- Errores que maneja junto a su errorCode:
+    - 400: VF
+    - 404: RNE
+    - 405: MNP
+    - 413: CDG
+    - 500: IE
+    - 406: NA
+    - 415: TNS
+    - 503: SND
 
-### GET — filtros por query params
+- Notar que en la practica los errores 406, 415 y 503 estan programados, pero nunca los utiliza al API, el comportamiento actual del programa enruta esos casos a errores 400
 
-```bash
-# Estadísticas generales (sin filtros)
-curl -s http://localhost:8000/v1/estadisticas/ventas
+# Testeo
+- Se creó un oráculo de python puro encargado de computar las mismas métricas con los mismos criterios del programa principal, para validar que el cálculo sea correcto.
+- Esto se reparte en los archivos conftest.py, test_api.py y test_loader.py
+- Calcula en base a los 7 parametros y politicas del programa principal, simula GET/POST y la carga del archivo inicial.
 
-# Ventas POS de clientes de 31 años
-curl -s "http://localhost:8000/v1/estadisticas/ventas?CANAL=POS&EDAD=31"
-
-# Rango de fechas
-curl -s "http://localhost:8000/v1/estadisticas/ventas?FECHA_DESDE=2026-01-01T00:00:00&FECHA_HASTA=2026-06-30T23:59:59"
-```
-
-### POST — filtros en el body JSON
-
-```bash
-curl -s -X POST http://localhost:8000/v1/estadisticas/ventas \
+# Ejemplos
+- Query: curl "http://localhost:8000/v1/estadisticas/ventas?CANAL=POS&EDAD=31"
+- Respuesta: {"suma":453653010.0,"conteo":52620,"promedio":8621.3,"minimo":20.0,"maximo":226475.0,"mediana":7016.0,"desviacion_estandar":12525.06}
+- Query: curl -X POST http://localhost:8000/v1/estadisticas/ventas \
   -H "Content-Type: application/json" \
-  -d '{
-    "consultas": [
-      {"consulta": "GENERO", "valor": "Femenino"},
-      {"consulta": "EDAD", "valor": "31"},
-      {"consulta": "CANAL", "valor": "POS"}
-    ]
-  }'
-```
-
-### Respuesta exitosa (200)
-
-```json
-{
-  "suma": 1500.5,
-  "conteo": 42,
-  "promedio": 35.73,
-  "minimo": 10.0,
-  "maximo": 100.0,
-  "mediana": 30.0,
-  "desviacion_estandar": 25.4
-}
-```
-
-Si ningún registro coincide con los filtros, se responde `conteo = 0`,
-`suma = 0.0` y el resto de las métricas en `null`.
-
-### Respuesta de error (400 / 500)
-
-```bash
-# Provocar una validación fallida (LOCAL no numérico)
-curl -s -X POST http://localhost:8000/v1/estadisticas/ventas \
-  -H "Content-Type: application/json" \
-  -d '{"consultas": [{"consulta": "LOCAL", "valor": "qwerqwer"}]}'
-```
-
-```json
-{
-  "detail": "El valor 'qwerqwer' no es un número entero válido para LOCAL",
-  "instance": "/v1/estadisticas/ventas",
-  "status": 400,
-  "title": "Bad Request",
-  "type": "https://developer.mozilla.org/es/docs/Web/HTTP/Reference/Status/400",
-  "timestamp": "2026-06-30T20:44:49.201437123Z",
-  "errorCode": "VF",
-  "errorLabel": "Validación Fallida",
-  "method": "POST"
-}
-```
-
-Los errores internos usan el mismo formato con `status: 500`,
-`errorCode: "IE"` y `errorLabel: "Error Interno"`. En `datos.json` hay más
-ejemplos de payloads y respuestas.
-
-## Verificación con el dataset real
-
-El servicio fue probado contra el CSV real de producción (~3,24 millones de
-registros, ~1,5 GB descomprimido):
-
-- Carga desatendida al arranque: se procesan **todas** las filas del archivo
-  (política actual: ninguna fila se descarta por celdas corruptas). Una fecha
-  de nacimiento o una fecha de venta ilegible quedan como `null` y esa fila
-  simplemente no coincide con los filtros `EDAD`/`FECHA_DESDE`/`FECHA_HASTA`,
-  pero sí se conserva y cuenta en el resto de las estadísticas.
-- Solo las filas cuyo `MONTO APLICADO` es ilegible quedan fuera de las 7
-  métricas (no tienen un valor numérico que sumar/promediar); en el dataset
-  real esto no ocurre (0 filas con monto nulo).
-- La cabecera real `GÉNERO` (con tilde) se normaliza correctamente.
-- Consultas GET/POST sobre los 3,2 millones de filas —incluida la mediana,
-  la agregación más costosa— responden en menos de 1 segundo gracias al
-  cómputo paralelo de Polars.
-
-El resultado exacto del GET sin filtros (`suma`, `conteo`, etc.) depende del
-archivo real que se cargue; ejecute `curl http://localhost:8000/v1/estadisticas/ventas`
-tras levantar el servicio para obtenerlo sobre su copia del dataset.
-
-
-## Pruebas automatizadas
-
-La suite se ejecuta **contra el CSV real de producción** (requiere el archivo
-en `data/`; si falta, las pruebas de API se omiten con un mensaje indicando
-cómo obtenerlo). Para validar los resultados, un *oráculo* independiente
-implementado con la librería estándar de Python (csv + math, sin Polars)
-recorre el mismo archivo, replica las reglas de limpieza y calcula las 7
-métricas por su cuenta: dos implementaciones independientes deben coincidir
-sobre los ~3,2 millones de registros.
-
-Cubre: éxito GET/POST, los 8 filtros y combinaciones (con valores tomados del
-propio CSV real), validaciones 400 con la estructura exacta de error, casos
-límite (0 coincidencias) y las defensas del cargador frente a CSVs corruptos.
-
-```bash
-source .venv/bin/activate
-pytest -v   # ~1-2 min: incluye la pasada del oráculo sobre el archivo completo
-```
+  -d '{"consultas":[{"consulta":"GENERO","valor":"Femenino"},{"consulta":"CANAL","valor":"POS"}]}'
+- Respuesta: {"suma":20649356290.0,"conteo":2086258,"promedio":9897.8,"minimo":15.0,"maximo":226475.0,"mediana":7476.0,"desviacion_estandar":14565.87}
