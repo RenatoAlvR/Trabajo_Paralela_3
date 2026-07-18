@@ -40,6 +40,7 @@ pip install -r requirements.txt
 - `GET /`: Redirige a /docs
 
 # Otras mecánicas
+- Destacar que los resultados se redondean a 2 decimales por comodidad
 - El programa se asegura de que los datos sean correctos, si el csv no contiene la columna MONTO APLICADO, no se generarán estadísticas y el programa termina con un error
 - Los datos aceptados son datos parseables mediante polars, en caso contrario, se lanzará un error
 - En caso de que el monto sea negativo (<0) se considerará corrupto
